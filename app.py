@@ -25,10 +25,13 @@ arquivo_pdf = st.file_uploader(
 if arquivo_pdf is not None:
 
     try:
-        # Guarda o arquivo original em memória
+
+        # Lê o PDF original
         arquivo_bytes = arquivo_pdf.getvalue()
 
-        leitor = PdfReader(BytesIO(arquivo_bytes))
+        leitor = PdfReader(
+            BytesIO(arquivo_bytes)
+        )
 
         quantidade_paginas = len(leitor.pages)
 
@@ -39,8 +42,6 @@ if arquivo_pdf is not None:
         st.info(
             f"📄 O arquivo possui {quantidade_paginas} páginas."
         )
-
-        st.write("")
 
         if st.button(
             "🔄 Separar comprovantes",
@@ -59,15 +60,20 @@ if arquivo_pdf is not None:
 
                 for numero in range(quantidade_paginas):
 
-                    pagina = leitor.pages[numero]
-
+                    # Cria um novo PDF
                     escritor = PdfWriter()
 
-                    escritor.add_page(pagina)
+                    # Copia a página diretamente do PDF original
+                    escritor.add_page(
+                        leitor.pages[numero]
+                    )
 
+                    # Salva o PDF individual
                     pdf_buffer = BytesIO()
 
-                    escritor.write(pdf_buffer)
+                    escritor.write(
+                        pdf_buffer
+                    )
 
                     pdf_buffer.seek(0)
 
@@ -81,21 +87,22 @@ if arquivo_pdf is not None:
                     )
 
                     progresso.progress(
-                        (numero + 1) / quantidade_paginas
+                        (numero + 1) /
+                        quantidade_paginas
                     )
 
-            # Guarda o ZIP para ele não desaparecer
-            st.session_state["zip_comprovantes"] = (
-                zip_buffer.getvalue()
-            )
+            # Salva o ZIP na sessão
+            st.session_state[
+                "zip_comprovantes"
+            ] = zip_buffer.getvalue()
 
-            st.session_state["quantidade"] = (
-                quantidade_paginas
-            )
+            st.session_state[
+                "quantidade"
+            ] = quantidade_paginas
 
             st.success(
-                f"✅ {quantidade_paginas} comprovantes "
-                "foram separados!"
+                f"✅ {quantidade_paginas} páginas "
+                "foram separadas."
             )
 
     except Exception as erro:
@@ -105,17 +112,18 @@ if arquivo_pdf is not None:
         )
 
 
-# Mostra o botão de download mesmo depois da atualização
 if "zip_comprovantes" in st.session_state:
 
     st.success(
         f"📦 {st.session_state['quantidade']} "
-        "comprovantes estão prontos."
+        "arquivos estão prontos."
     )
 
     st.download_button(
         label="📦 Baixar comprovantes em ZIP",
-        data=st.session_state["zip_comprovantes"],
+        data=st.session_state[
+            "zip_comprovantes"
+        ],
         file_name="comprovantes_separados.zip",
         mime="application/zip"
     )
