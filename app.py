@@ -5,11 +5,9 @@ from pypdf import PdfReader, PdfWriter
 
 
 def is_pagina_em_branco(pagina) -> bool:
-    """Verifica se a página não possui texto legível nem imagens."""
+    """Retorna True se a página não contiver texto visível nem imagens."""
     texto = pagina.extract_text() or ""
     tem_imagens = len(pagina.images) > 0
-    
-    # Se não tem texto significativo nem imagens, considera em branco
     return not texto.strip() and not tem_imagens
 
 
@@ -29,7 +27,7 @@ arquivo_pdf = st.file_uploader(
     type=["pdf"]
 )
 
-# Limpa o estado quando o arquivo é removido pelo usuário
+# Reseta as variáveis quando o arquivo é removido
 if arquivo_pdf is None:
     st.session_state.pop("zip_comprovantes", None)
     st.session_state.pop("quantidade", None)
@@ -41,63 +39,56 @@ if arquivo_pdf is not None:
         total_paginas = len(leitor.pages)
 
         st.success(f"✅ Arquivo selecionado: {arquivo_pdf.name}")
-        st.info(f"📄 O arquivo possui {total_paginas} páginas no total.")
+        st.info(f"📄 O arquivo original contém {total_paginas} páginas.")
 
-        # Opção para o usuário escolher se quer descartar páginas em branco
-        ignorar_em_branco = st.checkbox(
-            "Ignorar páginas em branco automaticamente", 
-            value=True
-        )
-
-        if st.button("🔄 Separar comprovantes", type="primary"):
+        if st.button("🔄 Separar e Excluir Em Branco", type="primary"):
             zip_buffer = BytesIO()
-            comprovantes_gerados = 0
-            paginas_ignoradas = 0
+            comprovantes_validos = 0
+            paginas_excluidas = 0
 
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 progresso = st.progress(0.0)
 
                 for idx, pagina in enumerate(leitor.pages):
-                    # Valida se a página deve ser ignorada
-                    if ignorar_em_branco and is_pagina_em_branco(pagina):
-                        paginas_ignoradas += 1
-                    else:
-                        comprovantes_gerados += 1
-                        
-                        escritor = PdfWriter()
-                        escritor.add_page(pagina)
+                    # Se a página for em branco, ignora a geração do arquivo
+                    if is_pagina_em_branco(pagina):
+                        paginas_excluidas += 1
+                        progresso.progress((idx + 1) / total_paginas)
+                        continue
 
-                        pdf_buffer = BytesIO()
-                        escritor.write(pdf_buffer)
+                    comprovantes_validos += 1
 
-                        nome_pdf = f"comprovante_{comprovantes_gerados:03d}.pdf"
-                        zip_file.writestr(nome_pdf, pdf_buffer.getvalue())
+                    escritor = PdfWriter()
+                    escritor.add_page(pagina)
+
+                    pdf_buffer = BytesIO()
+                    escritor.write(pdf_buffer)
+
+                    nome_pdf = f"comprovante_{comprovantes_validos:03d}.pdf"
+                    zip_file.writestr(nome_pdf, pdf_buffer.getvalue())
 
                     progresso.progress((idx + 1) / total_paginas)
 
-            if comprovantes_gerados == 0:
-                st.warning("⚠️ Nenhuma página válida encontrada. Todas parecem estar em branco.")
+            if comprovantes_validos == 0:
+                st.warning("⚠️ Todas as páginas do arquivo foram identificadas como em branco.")
             else:
                 st.session_state["zip_comprovantes"] = zip_buffer.getvalue()
-                st.session_state["quantidade"] = comprovantes_gerados
-                st.session_state["ignoradas"] = paginas_ignoradas
-                
-                st.success(
-                    f"✅ Processamento concluído! {comprovantes_gerados} comprovantes gerados."
-                )
+                st.session_state["quantidade"] = comprovantes_validos
+                st.session_state["ignoradas"] = paginas_excluidas
+
+                st.success("✅ Processamento concluído!")
 
     except Exception as erro:
         st.error(f"❌ Erro ao processar o PDF: {erro}")
 
-# Exibe a área de download caso o arquivo ZIP tenha sido gerado
 if arquivo_pdf is not None and "zip_comprovantes" in st.session_state:
     st.divider()
-    
-    msg_status = f"📦 {st.session_state['quantidade']} comprovante(s) pronto(s) para download."
+
+    msg = f"📦 {st.session_state['quantidade']} comprovante(s) gerado(s)."
     if st.session_state.get("ignoradas", 0) > 0:
-        msg_status += f" ({st.session_state['ignoradas']} página(s) em branco ignorada(s))"
-        
-    st.success(msg_status)
+        msg += f" ({st.session_state['ignoradas']} página(s) em branco foram excluída(s))."
+
+    st.success(msg)
 
     st.download_button(
         label="📦 Baixar comprovantes em ZIP",
