@@ -9,14 +9,12 @@ st.set_page_config(
     page_icon="📄"
 )
 
-
 st.title("📄 Separador de Comprovantes")
 
 st.write(
     "Selecione um único arquivo PDF contendo todos os comprovantes "
     "de pagamento."
 )
-
 
 arquivo_pdf = st.file_uploader(
     "Selecione o arquivo PDF",
@@ -26,12 +24,17 @@ arquivo_pdf = st.file_uploader(
 
 if arquivo_pdf is not None:
 
-    st.success(f"✅ Arquivo selecionado: {arquivo_pdf.name}")
-
     try:
-        leitor = PdfReader(arquivo_pdf)
+        # Guarda o arquivo original em memória
+        arquivo_bytes = arquivo_pdf.getvalue()
+
+        leitor = PdfReader(BytesIO(arquivo_bytes))
 
         quantidade_paginas = len(leitor.pages)
+
+        st.success(
+            f"✅ Arquivo selecionado: {arquivo_pdf.name}"
+        )
 
         st.info(
             f"📄 O arquivo possui {quantidade_paginas} páginas."
@@ -39,7 +42,10 @@ if arquivo_pdf is not None:
 
         st.write("")
 
-        if st.button("🔄 Separar comprovantes", type="primary"):
+        if st.button(
+            "🔄 Separar comprovantes",
+            type="primary"
+        ):
 
             zip_buffer = BytesIO()
 
@@ -49,12 +55,11 @@ if arquivo_pdf is not None:
                 zipfile.ZIP_DEFLATED
             ) as zip_file:
 
-                barra = st.progress(0)
+                progresso = st.progress(0)
 
-                for numero, pagina in enumerate(
-                    leitor.pages,
-                    start=1
-                ):
+                for numero in range(quantidade_paginas):
+
+                    pagina = leitor.pages[numero]
 
                     escritor = PdfWriter()
 
@@ -66,32 +71,51 @@ if arquivo_pdf is not None:
 
                     pdf_buffer.seek(0)
 
-                    nome_pdf = f"comprovante_{numero:03d}.pdf"
+                    nome_pdf = (
+                        f"comprovante_{numero + 1:03d}.pdf"
+                    )
 
                     zip_file.writestr(
                         nome_pdf,
-                        pdf_buffer.read()
+                        pdf_buffer.getvalue()
                     )
 
-                    progresso = numero / quantidade_paginas
+                    progresso.progress(
+                        (numero + 1) / quantidade_paginas
+                    )
 
-                    barra.progress(progresso)
-
-            zip_buffer.seek(0)
-
-            st.success(
-                f"✅ {quantidade_paginas} comprovantes foram separados!"
+            # Guarda o ZIP para ele não desaparecer
+            st.session_state["zip_comprovantes"] = (
+                zip_buffer.getvalue()
             )
 
-            st.download_button(
-                label="📦 Baixar comprovantes em ZIP",
-                data=zip_buffer,
-                file_name="comprovantes_separados.zip",
-                mime="application/zip"
+            st.session_state["quantidade"] = (
+                quantidade_paginas
+            )
+
+            st.success(
+                f"✅ {quantidade_paginas} comprovantes "
+                "foram separados!"
             )
 
     except Exception as erro:
 
         st.error(
-            f"❌ Não foi possível processar o PDF: {erro}"
+            f"❌ Erro ao processar o PDF: {erro}"
         )
+
+
+# Mostra o botão de download mesmo depois da atualização
+if "zip_comprovantes" in st.session_state:
+
+    st.success(
+        f"📦 {st.session_state['quantidade']} "
+        "comprovantes estão prontos."
+    )
+
+    st.download_button(
+        label="📦 Baixar comprovantes em ZIP",
+        data=st.session_state["zip_comprovantes"],
+        file_name="comprovantes_separados.zip",
+        mime="application/zip"
+    )
