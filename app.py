@@ -18,6 +18,9 @@ st.set_page_config(
     layout="wide"
 )
 
+LIMITE_MB = 10
+LIMITE_BYTES = LIMITE_MB * 1024 * 1024
+
 
 # ============================================================
 # NORMALIZAÇÃO
@@ -80,7 +83,30 @@ def identificar_tipo_comprovante(texto: str):
 
 
 # ============================================================
-# SEPARAÇÃO
+# CRIA PDF COM PÁGINAS
+# ============================================================
+
+def criar_pdf_paginas(paginas):
+
+    escritor = PdfWriter()
+
+    for pagina in paginas:
+
+        escritor.add_page(
+            pagina
+        )
+
+    buffer = BytesIO()
+
+    escritor.write(
+        buffer
+    )
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# SEPARAÇÃO DOS COMPROVANTES
 # ============================================================
 
 def separar_comprovantes(
@@ -91,13 +117,9 @@ def separar_comprovantes(
 
     comprovantes = []
 
-    comprovante_atual = []
+    demais_paginas = []
 
-    tipo_atual = None
-
-    pagina_inicio = None
-
-    paginas_sem_comprovante = []
+    comprovante_atual = None
 
     total_paginas = len(
         leitor.pages
@@ -129,151 +151,289 @@ def separar_comprovantes(
 
         texto = pagina.extract_text() or ""
 
-        # ----------------------------------------------------
-        # IDENTIFICA TIPO
-        # ----------------------------------------------------
-
         tipo = identificar_tipo_comprovante(
             texto
         )
 
         # ====================================================
-        # NOVO COMPROVANTE
+        # ENCONTROU UM NOVO COMPROVANTE
         # ====================================================
 
         if tipo is not None:
 
-            # Salva o comprovante anterior
-            if comprovante_atual:
+            # ------------------------------------------------
+            # Salva comprovante anterior
+            # ------------------------------------------------
 
-                comprovantes.append({
-                    "tipo": tipo_atual,
-                    "paginas": comprovante_atual,
-                    "pagina_inicio": pagina_inicio,
-                    "pagina_fim": numero_pagina - 1
-                })
+            if comprovante_atual is not None:
 
+                comprovantes.append(
+                    comprovante_atual
+                )
+
+            # ------------------------------------------------
             # Inicia novo comprovante
-            comprovante_atual = [
-                pagina
-            ]
+            # ------------------------------------------------
 
-            tipo_atual = tipo
-
-            pagina_inicio = numero_pagina
+            comprovante_atual = {
+                "tipo": tipo,
+                "paginas": [
+                    pagina
+                ],
+                "pagina_inicio": numero_pagina,
+                "pagina_fim": numero_pagina
+            }
 
             continue
 
         # ====================================================
-        # PÁGINA SEM COMPROVANTE
+        # PÁGINA SEM NOVO CABEÇALHO
         # ====================================================
 
-        if comprovante_atual:
+        if comprovante_atual is not None:
 
             # ------------------------------------------------
-            # ATENÇÃO:
-            # Essa página é considerada continuação do
-            # comprovante anterior.
+            # Mantém como continuação do comprovante
             # ------------------------------------------------
 
-            comprovante_atual.append(
+            comprovante_atual[
+                "paginas"
+            ].append(
                 pagina
             )
 
+            comprovante_atual[
+                "pagina_fim"
+            ] = numero_pagina
+
         else:
 
-            # Página que apareceu antes do primeiro comprovante
-            paginas_sem_comprovante.append(
-                {
-                    "numero": numero_pagina,
-                    "pagina": pagina
-                }
-            )
+            # ------------------------------------------------
+            # Ainda não encontramos nenhum comprovante.
+            # Essa página vai para os demais arquivos.
+            # ------------------------------------------------
+
+            demais_paginas.append({
+                "numero": numero_pagina,
+                "pagina": pagina
+            })
 
     # ========================================================
     # SALVA ÚLTIMO COMPROVANTE
     # ========================================================
 
-    if comprovante_atual:
+    if comprovante_atual is not None:
 
-        comprovantes.append({
-            "tipo": tipo_atual,
-            "paginas": comprovante_atual,
-            "pagina_inicio": pagina_inicio,
-            "pagina_fim": total_paginas
-        })
+        comprovantes.append(
+            comprovante_atual
+        )
 
     return (
         comprovantes,
-        paginas_sem_comprovante
+        demais_paginas
     )
 
 
 # ============================================================
-# CRIA PDF INDIVIDUAL
+# ADICIONA ARQUIVOS A UM ZIP
 # ============================================================
 
-def criar_pdf_comprovante(
-    paginas
+def adicionar_ao_zip(
+    zip_buffer,
+    nome_arquivo,
+    dados
 ):
 
-    escritor = PdfWriter()
+    with zipfile.ZipFile(
+        zip_buffer,
+        "a",
+        zipfile.ZIP_DEFLATED
+    ) as zip_file:
 
-    for pagina in paginas:
-
-        escritor.add_page(
-            pagina
+        zip_file.writestr(
+            nome_arquivo,
+            dados
         )
 
-    buffer = BytesIO()
-
-    escritor.write(
-        buffer
-    )
-
-    return buffer.getvalue()
-
 
 # ============================================================
-# CRIA ZIPS DE ATÉ 10 MB
+# CRIA ZIPS COM LIMITE REAL DE 10 MB
 # ============================================================
 
-def criar_zips_comprovantes(
-    comprovantes,
-    limite_mb=10
+def criar_pacotes_zip(
+    arquivos,
+    prefixo,
+    limite_bytes=LIMITE_BYTES
 ):
 
-    limite_bytes = (
-        limite_mb
-        * 1024
-        * 1024
-    )
+    pacotes = []
 
-    arquivos_zip = []
+    numero_pacote = 1
 
     zip_buffer = BytesIO()
 
-    zip_file = zipfile.ZipFile(
-        zip_buffer,
-        "w",
-        zipfile.ZIP_DEFLATED
-    )
+    contador_arquivos = 0
 
-    tamanho_estimado = 0
+    for nome_arquivo, dados in arquivos:
 
-    numero_parte = 1
+        # ----------------------------------------------------
+        # Se ainda não existe arquivo no ZIP
+        # ----------------------------------------------------
 
-    contador_arquivo = 1
+        if contador_arquivos == 0:
 
-    for comprovante in comprovantes:
+            zip_buffer = BytesIO()
+
+            adicionar_ao_zip(
+                zip_buffer,
+                nome_arquivo,
+                dados
+            )
+
+            tamanho_atual = len(
+                zip_buffer.getvalue()
+            )
+
+            # Arquivo sozinho maior que 10 MB
+            if tamanho_atual > limite_bytes:
+
+                pacotes.append({
+                    "nome": (
+                        f"{prefixo}_"
+                        f"{numero_pacote:03d}.zip"
+                    ),
+                    "dados":
+                        zip_buffer.getvalue(),
+                    "tamanho":
+                        tamanho_atual
+                })
+
+                numero_pacote += 1
+
+                contador_arquivos = 0
+
+            else:
+
+                contador_arquivos = 1
+
+            continue
+
+        # ----------------------------------------------------
+        # Testa se cabe no ZIP atual
+        # ----------------------------------------------------
+
+        teste_buffer = BytesIO()
+
+        with zipfile.ZipFile(
+            teste_buffer,
+            "w",
+            zipfile.ZIP_DEFLATED
+        ) as zip_teste:
+
+            with zipfile.ZipFile(
+                BytesIO(
+                    zip_buffer.getvalue()
+                ),
+                "r"
+            ) as zip_atual:
+
+                for item in zip_atual.infolist():
+
+                    zip_teste.writestr(
+                        item,
+                        zip_atual.read(
+                            item.filename
+                        )
+                    )
+
+            zip_teste.writestr(
+                nome_arquivo,
+                dados
+            )
+
+        tamanho_teste = len(
+            teste_buffer.getvalue()
+        )
+
+        # ----------------------------------------------------
+        # Cabe no ZIP atual
+        # ----------------------------------------------------
+
+        if tamanho_teste <= limite_bytes:
+
+            zip_buffer = teste_buffer
+
+            contador_arquivos += 1
+
+        else:
+
+            # ------------------------------------------------
+            # Fecha pacote atual
+            # ------------------------------------------------
+
+            pacotes.append({
+                "nome": (
+                    f"{prefixo}_"
+                    f"{numero_pacote:03d}.zip"
+                ),
+                "dados":
+                    zip_buffer.getvalue(),
+                "tamanho":
+                    len(zip_buffer.getvalue())
+            })
+
+            numero_pacote += 1
+
+            # ------------------------------------------------
+            # Começa novo pacote
+            # ------------------------------------------------
+
+            zip_buffer = BytesIO()
+
+            adicionar_ao_zip(
+                zip_buffer,
+                nome_arquivo,
+                dados
+            )
+
+            contador_arquivos = 1
+
+    # ========================================================
+    # SALVA ÚLTIMO PACOTE
+    # ========================================================
+
+    if contador_arquivos > 0:
+
+        dados_zip = zip_buffer.getvalue()
+
+        pacotes.append({
+            "nome": (
+                f"{prefixo}_"
+                f"{numero_pacote:03d}.zip"
+            ),
+            "dados": dados_zip,
+            "tamanho": len(dados_zip)
+        })
+
+    return pacotes
+
+
+# ============================================================
+# CRIA ARQUIVOS DOS COMPROVANTES
+# ============================================================
+
+def preparar_comprovantes(
+    comprovantes
+):
+
+    arquivos = []
+
+    for numero, comprovante in enumerate(
+        comprovantes,
+        start=1
+    ):
 
         tipo = comprovante["tipo"]
-
-        paginas = comprovante["paginas"]
-
-        # ----------------------------------------------------
-        # NOME
-        # ----------------------------------------------------
 
         if tipo == "PIX":
 
@@ -291,116 +451,82 @@ def criar_zips_comprovantes(
 
             prefixo = "OUTRO"
 
-        # ----------------------------------------------------
-        # PDF
-        # ----------------------------------------------------
-
-        pdf_bytes = criar_pdf_comprovante(
-            paginas
+        pdf_bytes = criar_pdf_paginas(
+            comprovante["paginas"]
         )
 
         nome = (
             f"comprovante_"
             f"{prefixo}_"
-            f"{contador_arquivo:03d}.pdf"
+            f"{numero:03d}.pdf"
         )
 
-        tamanho_pdf = len(
-            pdf_bytes
-        )
-
-        # ----------------------------------------------------
-        # NOVO ZIP
-        # ----------------------------------------------------
-
-        if (
-            tamanho_estimado > 0
-            and tamanho_estimado + tamanho_pdf > limite_bytes
-        ):
-
-            zip_file.close()
-
-            arquivos_zip.append({
-                "nome":
-                    f"comprovantes_"
-                    f"parte_{numero_parte:03d}.zip",
-
-                "dados":
-                    zip_buffer.getvalue()
-            })
-
-            numero_parte += 1
-
-            zip_buffer = BytesIO()
-
-            zip_file = zipfile.ZipFile(
-                zip_buffer,
-                "w",
-                zipfile.ZIP_DEFLATED
+        arquivos.append(
+            (
+                nome,
+                pdf_bytes
             )
-
-            tamanho_estimado = 0
-
-        # ----------------------------------------------------
-        # ADICIONA
-        # ----------------------------------------------------
-
-        zip_file.writestr(
-            nome,
-            pdf_bytes
         )
 
-        tamanho_estimado += tamanho_pdf
-
-        contador_arquivo += 1
-
-    # --------------------------------------------------------
-    # ÚLTIMO ZIP
-    # --------------------------------------------------------
-
-    zip_file.close()
-
-    if tamanho_estimado > 0:
-
-        arquivos_zip.append({
-            "nome":
-                f"comprovantes_"
-                f"parte_{numero_parte:03d}.zip",
-
-            "dados":
-                zip_buffer.getvalue()
-        })
-
-    return arquivos_zip
+    return arquivos
 
 
 # ============================================================
-# PDF DAS PÁGINAS SEM COMPROVANTE
+# CRIA ARQUIVOS DOS DEMAIS
 # ============================================================
 
-def criar_pdf_sem_comprovantes(
-    paginas
+def preparar_demais_arquivos(
+    demais_paginas
 ):
 
-    if not paginas:
+    arquivos = []
 
-        return None
+    for item in demais_paginas:
 
-    escritor = PdfWriter()
+        numero = item["numero"]
 
-    for item in paginas:
+        pagina = item["pagina"]
 
-        escritor.add_page(
-            item["pagina"]
+        pdf_bytes = criar_pdf_paginas(
+            [pagina]
         )
 
-    buffer = BytesIO()
+        nome = (
+            f"pagina_"
+            f"{numero:03d}.pdf"
+        )
 
-    escritor.write(
-        buffer
-    )
+        arquivos.append(
+            (
+                nome,
+                pdf_bytes
+            )
+        )
 
-    return buffer.getvalue()
+    return arquivos
+
+
+# ============================================================
+# LIMPA RESULTADOS
+# ============================================================
+
+def limpar_resultados():
+
+    chaves = [
+        "comprovantes",
+        "demais_paginas",
+        "pacotes_comprovantes",
+        "pacotes_demais",
+        "processado",
+        "tempo_processamento"
+    ]
+
+    for chave in chaves:
+
+        st.session_state.pop(
+            chave,
+            None
+        )
 
 
 # ============================================================
@@ -413,7 +539,7 @@ st.title(
 
 st.write(
     """
-    Selecione um único PDF contendo vários comprovantes.
+    Selecione um único PDF contendo vários documentos.
 
     O sistema identifica automaticamente:
 
@@ -423,10 +549,8 @@ st.write(
 
     🟣 **COMPROVANTE DE TRANSAÇÃO BANCÁRIA**
 
-    Cada comprovante pode possuir uma ou várias páginas.
-
-    As páginas que não forem identificadas como comprovantes
-    serão disponibilizadas separadamente.
+    Os resultados serão organizados em pacotes ZIP de até
+    **10 MB**.
     """
 )
 
@@ -442,35 +566,15 @@ arquivo_pdf = st.file_uploader(
 
 
 # ============================================================
-# LIMPA RESULTADOS QUANDO TROCA O ARQUIVO
-# ============================================================
-
-if arquivo_pdf is None:
-
-    chaves = [
-        "arquivos_zip",
-        "pdf_sem_comprovantes",
-        "quantidade",
-        "pix",
-        "transferencias",
-        "transacoes",
-        "paginas_sem_comprovante",
-        "detalhes"
-    ]
-
-    for chave in chaves:
-
-        st.session_state.pop(
-            chave,
-            None
-        )
-
-
-# ============================================================
 # PROCESSAMENTO
 # ============================================================
 
 if arquivo_pdf is not None:
+
+    st.success(
+        f"✅ Arquivo selecionado: "
+        f"**{arquivo_pdf.name}**"
+    )
 
     try:
 
@@ -480,11 +584,6 @@ if arquivo_pdf is not None:
 
         total_paginas = len(
             leitor.pages
-        )
-
-        st.success(
-            f"✅ Arquivo selecionado: "
-            f"{arquivo_pdf.name}"
         )
 
         st.info(
@@ -504,8 +603,6 @@ if arquivo_pdf is not None:
 
             inicio = time.time()
 
-            st.divider()
-
             status = st.empty()
 
             progresso = st.progress(0)
@@ -516,7 +613,7 @@ if arquivo_pdf is not None:
 
             (
                 comprovantes,
-                paginas_sem_comprovante
+                demais_paginas
             ) = separar_comprovantes(
                 leitor,
                 progresso,
@@ -524,359 +621,383 @@ if arquivo_pdf is not None:
             )
 
             # =================================================
-            # NENHUM COMPROVANTE
+            # PREPARA COMPROVANTES
             # =================================================
 
-            if not comprovantes:
+            status.text(
+                "📦 Preparando comprovantes..."
+            )
 
-                status.error(
-                    "❌ Nenhum comprovante encontrado."
+            arquivos_comprovantes = (
+                preparar_comprovantes(
+                    comprovantes
                 )
+            )
 
-                st.warning(
-                    "Todas as páginas foram consideradas "
-                    "como páginas sem comprovante."
+            pacotes_comprovantes = (
+                criar_pacotes_zip(
+                    arquivos_comprovantes,
+                    "COMPROVANTES"
                 )
+            )
 
-                # Cria PDF com tudo
-                pdf_restante = criar_pdf_sem_comprovantes(
-                    paginas_sem_comprovante
+            # =================================================
+            # PREPARA DEMAIS ARQUIVOS
+            # =================================================
+
+            status.text(
+                "📄 Preparando demais arquivos..."
+            )
+
+            arquivos_demais = (
+                preparar_demais_arquivos(
+                    demais_paginas
                 )
+            )
 
-                st.session_state[
-                    "pdf_sem_comprovantes"
-                ] = pdf_restante
-
-                st.session_state[
-                    "paginas_sem_comprovante"
-                ] = len(
-                    paginas_sem_comprovante
+            pacotes_demais = (
+                criar_pacotes_zip(
+                    arquivos_demais,
+                    "SEM_COMPROVANTES"
                 )
+            )
 
-            else:
+            # =================================================
+            # CONTADORES
+            # =================================================
 
-                # =================================================
-                # GERA ZIPS
-                # =================================================
+            quantidade_pix = sum(
+                1
+                for c in comprovantes
+                if c["tipo"] == "PIX"
+            )
 
-                status.text(
-                    "📦 Gerando arquivos dos comprovantes..."
-                )
+            quantidade_transferencia = sum(
+                1
+                for c in comprovantes
+                if c["tipo"] == "TRANSFERENCIA"
+            )
 
-                arquivos_zip = criar_zips_comprovantes(
-                    comprovantes,
-                    limite_mb=10
-                )
+            quantidade_transacao = sum(
+                1
+                for c in comprovantes
+                if c["tipo"] == "TRANSACAO_BANCARIA"
+            )
 
-                # =================================================
-                # GERA PDF RESTANTE
-                # =================================================
+            # =================================================
+            # SALVA SESSION STATE
+            # =================================================
 
-                status.text(
-                    "📄 Gerando arquivo das páginas restantes..."
-                )
+            st.session_state[
+                "comprovantes"
+            ] = comprovantes
 
-                pdf_restante = criar_pdf_sem_comprovantes(
-                    paginas_sem_comprovante
-                )
+            st.session_state[
+                "demais_paginas"
+            ] = demais_paginas
 
-                # =================================================
-                # CONTADORES
-                # =================================================
+            st.session_state[
+                "pacotes_comprovantes"
+            ] = pacotes_comprovantes
 
-                quantidade_pix = sum(
-                    1
-                    for c in comprovantes
-                    if c["tipo"] == "PIX"
-                )
+            st.session_state[
+                "pacotes_demais"
+            ] = pacotes_demais
 
-                quantidade_transferencia = sum(
-                    1
-                    for c in comprovantes
-                    if c["tipo"] == "TRANSFERENCIA"
-                )
+            st.session_state[
+                "quantidade_total"
+            ] = len(comprovantes)
 
-                quantidade_transacao = sum(
-                    1
-                    for c in comprovantes
-                    if c["tipo"] == "TRANSACAO_BANCARIA"
-                )
+            st.session_state[
+                "quantidade_pix"
+            ] = quantidade_pix
 
-                # =================================================
-                # SALVA
-                # =================================================
+            st.session_state[
+                "quantidade_transferencia"
+            ] = quantidade_transferencia
 
-                st.session_state[
-                    "arquivos_zip"
-                ] = arquivos_zip
+            st.session_state[
+                "quantidade_transacao"
+            ] = quantidade_transacao
 
-                st.session_state[
-                    "pdf_sem_comprovantes"
-                ] = pdf_restante
+            st.session_state[
+                "quantidade_demais"
+            ] = len(demais_paginas)
 
-                st.session_state[
-                    "quantidade"
-                ] = len(comprovantes)
+            st.session_state[
+                "processado"
+            ] = True
 
-                st.session_state[
-                    "pix"
-                ] = quantidade_pix
+            st.session_state[
+                "tempo_processamento"
+            ] = time.time() - inicio
 
-                st.session_state[
-                    "transferencias"
-                ] = quantidade_transferencia
+            progresso.progress(1.0)
 
-                st.session_state[
-                    "transacoes"
-                ] = quantidade_transacao
+            status.success(
+                "✅ Processamento concluído!"
+            )
 
-                st.session_state[
-                    "paginas_sem_comprovante"
-                ] = len(
-                    paginas_sem_comprovante
-                )
-
-                st.session_state[
-                    "detalhes"
-                ] = comprovantes
-
-                # =================================================
-                # TEMPO
-                # =================================================
-
-                tempo = (
-                    time.time()
-                    - inicio
-                )
-
-                progresso.progress(
-                    1.0
-                )
-
-                status.success(
-                    "✅ Processamento concluído!"
-                )
-
-                # =================================================
-                # RESULTADO
-                # =================================================
-
-                st.divider()
-
-                st.subheader(
-                    "📊 Resultado"
-                )
-
-                col1, col2, col3, col4 = st.columns(4)
-
-                with col1:
-
-                    st.metric(
-                        "Total",
-                        len(comprovantes)
-                    )
-
-                with col2:
-
-                    st.metric(
-                        "PIX",
-                        quantidade_pix
-                    )
-
-                with col3:
-
-                    st.metric(
-                        "Transferências",
-                        quantidade_transferencia
-                    )
-
-                with col4:
-
-                    st.metric(
-                        "Transações bancárias",
-                        quantidade_transacao
-                    )
-
-                st.info(
-                    f"⏱️ Tempo de processamento: "
-                    f"**{tempo:.1f} segundos**"
-                )
-
-                # =================================================
-                # PÁGINAS SEM COMPROVANTE
-                # =================================================
-
-                if paginas_sem_comprovante:
-
-                    st.warning(
-                        f"⚠️ "
-                        f"{len(paginas_sem_comprovante)} "
-                        f"página(s) não foram identificadas "
-                        f"como comprovantes."
-                    )
-
-                # =================================================
-                # TABELA
-                # =================================================
-
-                st.divider()
-
-                st.subheader(
-                    "🔎 Comprovantes identificados"
-                )
-
-                dados = []
-
-                for numero, comprovante in enumerate(
-                    comprovantes,
-                    start=1
-                ):
-
-                    dados.append({
-                        "Nº": numero,
-
-                        "Tipo":
-                            comprovante["tipo"],
-
-                        "Página inicial":
-                            comprovante[
-                                "pagina_inicio"
-                            ],
-
-                        "Página final":
-                            comprovante[
-                                "pagina_fim"
-                            ],
-
-                        "Quantidade de páginas":
-                            len(
-                                comprovante[
-                                    "paginas"
-                                ]
-                            )
-                    })
-
-                st.dataframe(
-                    dados,
-                    use_container_width=True,
-                    hide_index=True
-                )
+            st.rerun()
 
     except Exception as erro:
 
         st.error(
-            f"❌ Erro ao processar o PDF: {erro}"
+            f"❌ Erro ao abrir o PDF: {erro}"
         )
 
 
 # ============================================================
-# DOWNLOADS
+# RESULTADO
 # ============================================================
 
-if (
-    arquivo_pdf is not None
-    and "arquivos_zip"
-    in st.session_state
+if st.session_state.get(
+    "processado",
+    False
 ):
 
     st.divider()
 
     st.subheader(
-        "📦 Comprovantes separados"
+        "📊 Resultado da separação"
     )
 
-    arquivos_zip = st.session_state[
-        "arquivos_zip"
+    # ========================================================
+    # CONTADORES
+    # ========================================================
+
+    total = st.session_state[
+        "quantidade_total"
     ]
 
+    pix = st.session_state[
+        "quantidade_pix"
+    ]
+
+    transferencias = st.session_state[
+        "quantidade_transferencia"
+    ]
+
+    transacoes = st.session_state[
+        "quantidade_transacao"
+    ]
+
+    demais = st.session_state[
+        "quantidade_demais"
+    ]
+
+    # --------------------------------------------------------
+    # DESTAQUE TOTAL
+    # --------------------------------------------------------
+
     st.success(
-        f"✅ {len(arquivos_zip)} "
-        f"arquivo(s) ZIP foram gerados."
+        f"🎯 **{total} comprovante(s) encontrados!**"
+    )
+
+    # --------------------------------------------------------
+    # MÉTRICAS
+    # --------------------------------------------------------
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+
+        st.metric(
+            "📄 Comprovantes",
+            total
+        )
+
+    with col2:
+
+        st.metric(
+            "🔵 PIX",
+            pix
+        )
+
+    with col3:
+
+        st.metric(
+            "🟢 Transferências",
+            transferencias
+        )
+
+    with col4:
+
+        st.metric(
+            "🟣 Transações bancárias",
+            transacoes
+        )
+
+    # ========================================================
+    # DEMAIS PÁGINAS
+    # ========================================================
+
+    st.info(
+        f"📑 **{demais} página(s)** "
+        f"não foram identificadas como comprovantes."
+    )
+
+    st.info(
+        f"⏱️ Tempo de processamento: "
+        f"**{st.session_state['tempo_processamento']:.1f} segundos**"
     )
 
     # ========================================================
-    # ZIPS
-    # ========================================================
-
-    for arquivo in arquivos_zip:
-
-        tamanho_mb = (
-            len(
-                arquivo["dados"]
-            )
-            / (
-                1024 * 1024
-            )
-        )
-
-        st.download_button(
-            label=(
-                f"📦 {arquivo['nome']} "
-                f"— {tamanho_mb:.2f} MB"
-            ),
-
-            data=arquivo["dados"],
-
-            file_name=arquivo["nome"],
-
-            mime="application/zip",
-
-            use_container_width=True
-        )
-
-    # ========================================================
-    # RESTANTE
+    # DETALHAMENTO
     # ========================================================
 
     st.divider()
 
     st.subheader(
-        "📄 Arquivos restantes"
+        "🔎 Comprovantes encontrados"
     )
 
-    pdf_sem_comprovantes = st.session_state.get(
-        "pdf_sem_comprovantes"
+    dados = []
+
+    for numero, comprovante in enumerate(
+        st.session_state["comprovantes"],
+        start=1
+    ):
+
+        dados.append({
+            "Nº": numero,
+
+            "Tipo":
+                comprovante["tipo"],
+
+            "Página inicial":
+                comprovante[
+                    "pagina_inicio"
+                ],
+
+            "Página final":
+                comprovante[
+                    "pagina_fim"
+                ],
+
+            "Quantidade de páginas":
+                len(
+                    comprovante[
+                        "paginas"
+                    ]
+                )
+        })
+
+    st.dataframe(
+        dados,
+        use_container_width=True,
+        hide_index=True
     )
 
-    quantidade_restante = st.session_state.get(
-        "paginas_sem_comprovante",
-        0
+    # ========================================================
+    # DOWNLOAD COMPROVANTES
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "📦 1. Comprovantes agrupados"
     )
 
-    if pdf_sem_comprovantes:
+    pacotes_comprovantes = (
+        st.session_state[
+            "pacotes_comprovantes"
+        ]
+    )
 
-        tamanho_mb = (
-            len(
-                pdf_sem_comprovantes
-            )
-            / (
-                1024 * 1024
-            )
+    if pacotes_comprovantes:
+
+        st.success(
+            f"✅ {len(pacotes_comprovantes)} "
+            f"pacote(s) de comprovantes."
         )
+
+        for pacote in pacotes_comprovantes:
+
+            tamanho_mb = (
+                pacote["tamanho"]
+                / (1024 * 1024)
+            )
+
+            st.download_button(
+                label=(
+                    f"📦 {pacote['nome']} "
+                    f"— {tamanho_mb:.2f} MB"
+                ),
+
+                data=pacote["dados"],
+
+                file_name=pacote["nome"],
+
+                mime="application/zip",
+
+                use_container_width=True,
+
+                key=(
+                    f"download_comprovantes_"
+                    f"{pacote['nome']}"
+                )
+            )
+
+    else:
 
         st.warning(
-            f"⚠️ {quantidade_restante} "
-            f"página(s) não foram identificadas "
-            f"como comprovantes."
+            "Nenhum comprovante foi encontrado."
         )
 
-        st.download_button(
-            label=(
-                f"📄 Baixar páginas restantes "
-                f"— {tamanho_mb:.2f} MB"
-            ),
+    # ========================================================
+    # DOWNLOAD DEMAIS ARQUIVOS
+    # ========================================================
 
-            data=pdf_sem_comprovantes,
+    st.divider()
 
-            file_name="paginas_sem_comprovantes.pdf",
+    st.subheader(
+        "📁 2. Arquivos sem comprovantes"
+    )
 
-            mime="application/pdf",
+    pacotes_demais = (
+        st.session_state[
+            "pacotes_demais"
+        ]
+    )
 
-            use_container_width=True
+    if pacotes_demais:
+
+        st.warning(
+            f"⚠️ {len(pacotes_demais)} "
+            f"pacote(s) contendo as páginas "
+            f"que não foram identificadas como comprovantes."
         )
+
+        for pacote in pacotes_demais:
+
+            tamanho_mb = (
+                pacote["tamanho"]
+                / (1024 * 1024)
+            )
+
+            st.download_button(
+                label=(
+                    f"📁 {pacote['nome']} "
+                    f"— {tamanho_mb:.2f} MB"
+                ),
+
+                data=pacote["dados"],
+
+                file_name=pacote["nome"],
+
+                mime="application/zip",
+
+                use_container_width=True,
+
+                key=(
+                    f"download_demais_"
+                    f"{pacote['nome']}"
+                )
+            )
 
     else:
 
         st.success(
-            "✅ Não existem páginas restantes."
+            "✅ Não existem páginas sem comprovantes."
         )
