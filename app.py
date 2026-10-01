@@ -14,7 +14,7 @@ LIMITE_ZIP = 10 * 1024 * 1024  # 10 MB
 
 
 # ============================================================
-# NORMALIZAÇÃO DO TEXTO
+# NORMALIZAR TEXTO
 # ============================================================
 
 def normalizar_texto(texto):
@@ -22,7 +22,10 @@ def normalizar_texto(texto):
     if not texto:
         return ""
 
-    texto = unicodedata.normalize("NFKD", texto)
+    texto = unicodedata.normalize(
+        "NFKD",
+        texto
+    )
 
     texto = "".join(
         c for c in texto
@@ -31,24 +34,49 @@ def normalizar_texto(texto):
 
     texto = texto.upper()
 
-    texto = re.sub(r"\s+", " ", texto)
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    )
 
     return texto.strip()
 
 
 # ============================================================
-# IDENTIFICA O COMPROVANTE
+# IDENTIFICAR ANEXO
+# ============================================================
+
+def identificar_anexo(texto):
+
+    texto = normalizar_texto(texto)
+
+    # Procura ANEXO isoladamente
+    if re.search(r"\bANEXO\b", texto):
+        return True
+
+    return False
+
+
+# ============================================================
+# IDENTIFICAR COMPROVANTE
 # ============================================================
 
 def identificar_comprovante(texto):
 
     texto = normalizar_texto(texto)
 
+    # --------------------------------------------------------
     # PIX
+    # --------------------------------------------------------
+
     if "COMPROVANTE PIX" in texto:
         return "PIX"
 
+    # --------------------------------------------------------
     # TRANSFERÊNCIA
+    # --------------------------------------------------------
+
     if (
         "COMPROVANTE DE TRANSFERENCIA" in texto
         or
@@ -56,7 +84,10 @@ def identificar_comprovante(texto):
     ):
         return "TRANSFERENCIA"
 
+    # --------------------------------------------------------
     # TRANSAÇÃO BANCÁRIA
+    # --------------------------------------------------------
+
     if (
         "COMPROVANTE DE TRANSACAO BANCARIA" in texto
         or
@@ -68,16 +99,17 @@ def identificar_comprovante(texto):
 
 
 # ============================================================
-# CRIA PDF COM UMA ÚNICA PÁGINA
+# CRIAR PDF COM UMA ÚNICA PÁGINA
 # ============================================================
 
-def criar_pdf_da_pagina(reader, numero_pagina):
+def criar_pdf_pagina(reader, numero_pagina):
 
     writer = PdfWriter()
 
-    # IMPORTANTE:
-    # adiciona SOMENTE a página encontrada
-    writer.add_page(reader.pages[numero_pagina])
+    # SOMENTE A PÁGINA DO COMPROVANTE
+    writer.add_page(
+        reader.pages[numero_pagina]
+    )
 
     buffer = BytesIO()
 
@@ -87,27 +119,254 @@ def criar_pdf_da_pagina(reader, numero_pagina):
 
 
 # ============================================================
-# EXTRAI SOMENTE AS PÁGINAS DOS COMPROVANTES
+# CRIAR PDF DE UMA PÁGINA NÃO COMPROVANTE
 # ============================================================
 
-def extrair_comprovantes(arquivo):
+def criar_pdf_pagina_sem_comprovante(
+    reader,
+    numero_pagina
+):
+
+    writer = PdfWriter()
+
+    writer.add_page(
+        reader.pages[numero_pagina]
+    )
+
+    buffer = BytesIO()
+
+    writer.write(buffer)
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# CRIAR ZIP
+# ============================================================
+
+def gerar_zip(arquivos):
+
+    buffer = BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6
+    ) as zip_file:
+
+        for nome, dados in arquivos:
+
+            zip_file.writestr(
+                nome,
+                dados
+            )
+
+    return buffer.getvalue()
+
+
+# ============================================================
+# DIVIDIR ARQUIVOS EM ZIPS DE ATÉ 10 MB
+# ============================================================
+
+def dividir_em_zips(
+    arquivos,
+    prefixo
+):
+
+    zips = []
+
+    arquivos_atual = []
+
+    numero_zip = 1
+
+    for nome, dados in arquivos:
+
+        # ----------------------------------------------------
+        # Testa o arquivo sozinho
+        # ----------------------------------------------------
+
+        zip_individual = gerar_zip([
+            (nome, dados)
+        ])
+
+        # ----------------------------------------------------
+        # Se o próprio arquivo ultrapassar 10 MB
+        # ----------------------------------------------------
+
+        if len(zip_individual) > LIMITE_ZIP:
+
+            # Fecha o ZIP atual
+            if arquivos_atual:
+
+                zip_bytes = gerar_zip(
+                    arquivos_atual
+                )
+
+                nome_zip = (
+                    f"{prefixo}_{numero_zip:03d}.zip"
+                )
+
+                zips.append(
+                    (
+                        nome_zip,
+                        zip_bytes
+                    )
+                )
+
+                numero_zip += 1
+
+                arquivos_atual = []
+
+            # Arquivo grande fica sozinho
+            nome_zip = (
+                f"{prefixo}_{numero_zip:03d}.zip"
+            )
+
+            zips.append(
+                (
+                    nome_zip,
+                    zip_individual
+                )
+            )
+
+            numero_zip += 1
+
+            continue
+
+        # ----------------------------------------------------
+        # Testa adicionar ao ZIP atual
+        # ----------------------------------------------------
+
+        tentativa = (
+            arquivos_atual
+            + [(nome, dados)]
+        )
+
+        zip_teste = gerar_zip(
+            tentativa
+        )
+
+        # ----------------------------------------------------
+        # Cabe no ZIP
+        # ----------------------------------------------------
+
+        if len(zip_teste) <= LIMITE_ZIP:
+
+            arquivos_atual.append(
+                (nome, dados)
+            )
+
+        # ----------------------------------------------------
+        # Não cabe
+        # ----------------------------------------------------
+
+        else:
+
+            if arquivos_atual:
+
+                zip_bytes = gerar_zip(
+                    arquivos_atual
+                )
+
+                nome_zip = (
+                    f"{prefixo}_{numero_zip:03d}.zip"
+                )
+
+                zips.append(
+                    (
+                        nome_zip,
+                        zip_bytes
+                    )
+                )
+
+                numero_zip += 1
+
+            # Começa novo ZIP
+            arquivos_atual = [
+                (nome, dados)
+            ]
+
+    # --------------------------------------------------------
+    # Último ZIP
+    # --------------------------------------------------------
+
+    if arquivos_atual:
+
+        zip_bytes = gerar_zip(
+            arquivos_atual
+        )
+
+        nome_zip = (
+            f"{prefixo}_{numero_zip:03d}.zip"
+        )
+
+        zips.append(
+            (
+                nome_zip,
+                zip_bytes
+            )
+        )
+
+    return zips
+
+
+# ============================================================
+# PROCESSAR PDF
+# ============================================================
+
+def processar_pdf(arquivo):
 
     reader = PdfReader(arquivo)
 
     comprovantes = []
 
-    for numero_pagina, pagina in enumerate(reader.pages):
+    sem_comprovantes = []
+
+    encontrou_anexo = False
+
+    # ========================================================
+    # PERCORRER PÁGINAS
+    # ========================================================
+
+    for numero_pagina, pagina in enumerate(
+        reader.pages
+    ):
 
         try:
+
             texto = pagina.extract_text() or ""
 
         except Exception:
+
             texto = ""
 
-        tipo = identificar_comprovante(texto)
+        # ----------------------------------------------------
+        # ANTES DO ANEXO
+        # ----------------------------------------------------
+
+        if not encontrou_anexo:
+
+            if identificar_anexo(texto):
+
+                encontrou_anexo = True
+
+                # A página do título "ANEXO" não é
+                # considerada comprovante.
+                # Portanto, não adicionamos aqui.
+
+            continue
+
+        # ----------------------------------------------------
+        # DENTRO DO ANEXO
+        # ----------------------------------------------------
+
+        tipo = identificar_comprovante(
+            texto
+        )
 
         # ====================================================
-        # SE A PÁGINA É UM COMPROVANTE
+        # É COMPROVANTE
         # ====================================================
 
         if tipo:
@@ -117,98 +376,22 @@ def extrair_comprovantes(arquivo):
                 "pagina": numero_pagina
             })
 
-    return reader, comprovantes
-
-
-# ============================================================
-# CRIA ZIPS DE ATÉ 10 MB
-# ============================================================
-
-def criar_zips_10mb(arquivos):
-
-    zips = []
-
-    arquivos_atual = []
-
-    def gerar_zip(lista):
-
-        buffer = BytesIO()
-
-        with zipfile.ZipFile(
-            buffer,
-            "w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6
-        ) as zip_file:
-
-            for nome, dados in lista:
-
-                zip_file.writestr(
-                    nome,
-                    dados
-                )
-
-        return buffer.getvalue()
-
-    for nome, dados in arquivos:
-
-        # Testa o arquivo sozinho
-        zip_individual = gerar_zip([
-            (nome, dados)
-        ])
-
-        # Se sozinho já ultrapassa 10 MB
-        if len(zip_individual) > LIMITE_ZIP:
-
-            if arquivos_atual:
-
-                zips.append(
-                    gerar_zip(arquivos_atual)
-                )
-
-                arquivos_atual = []
-
-            # Coloca sozinho
-            zips.append(zip_individual)
-
-            continue
-
-        # Testa adicionar ao ZIP atual
-        tentativa = arquivos_atual + [
-            (nome, dados)
-        ]
-
-        zip_teste = gerar_zip(tentativa)
-
-        # Cabe no ZIP
-        if len(zip_teste) <= LIMITE_ZIP:
-
-            arquivos_atual.append(
-                (nome, dados)
-            )
+        # ====================================================
+        # NÃO É COMPROVANTE
+        # ====================================================
 
         else:
 
-            # Fecha ZIP atual
-            if arquivos_atual:
+            sem_comprovantes.append(
+                numero_pagina
+            )
 
-                zips.append(
-                    gerar_zip(arquivos_atual)
-                )
-
-            # Começa outro
-            arquivos_atual = [
-                (nome, dados)
-            ]
-
-    # Último ZIP
-    if arquivos_atual:
-
-        zips.append(
-            gerar_zip(arquivos_atual)
-        )
-
-    return zips
+    return (
+        reader,
+        comprovantes,
+        sem_comprovantes,
+        encontrou_anexo
+    )
 
 
 # ============================================================
@@ -226,11 +409,14 @@ st.set_page_config(
 # TÍTULO
 # ============================================================
 
-st.title("📄 Extrator de Comprovantes")
+st.title(
+    "📄 Extrator de Comprovantes"
+)
 
 st.write(
-    "O sistema irá identificar e extrair "
-    "**somente a página do comprovante**."
+    "O sistema irá analisar somente o conteúdo "
+    "do **Anexo**, separar os comprovantes das "
+    "demais páginas e criar arquivos ZIP de até 10 MB."
 )
 
 
@@ -245,41 +431,49 @@ arquivo = st.file_uploader(
 
 
 # ============================================================
-# BOTÃO
+# PROCESSAMENTO
 # ============================================================
 
 if arquivo is not None:
 
     if st.button(
-        "🔎 Extrair comprovantes",
+        "🔎 Processar PDF",
         type="primary"
     ):
 
         with st.spinner(
-            "Procurando comprovantes..."
+            "Processando o PDF..."
         ):
 
             try:
 
-                reader, comprovantes = (
-                    extrair_comprovantes(arquivo)
+                (
+                    reader,
+                    comprovantes,
+                    paginas_sem_comprovante,
+                    encontrou_anexo
+                ) = processar_pdf(
+                    arquivo
                 )
 
                 # ============================================
-                # NENHUM COMPROVANTE
+                # ANEXO NÃO ENCONTRADO
                 # ============================================
 
-                if not comprovantes:
+                if not encontrou_anexo:
 
                     st.error(
-                        "Nenhum comprovante foi encontrado."
+                        "Não foi encontrada uma página "
+                        "com a identificação 'ANEXO'."
                     )
 
                     st.stop()
 
                 # ============================================
-                # CONTADORES
+                # ARQUIVOS DOS COMPROVANTES
                 # ============================================
+
+                arquivos_comprovantes = []
 
                 contadores = {
                     "PIX": 0,
@@ -287,77 +481,118 @@ if arquivo is not None:
                     "TRANSACAO_BANCARIA": 0
                 }
 
-                arquivos_saida = []
+                for comprovante in comprovantes:
 
-                # ============================================
-                # EXTRAI CADA PÁGINA
-                # ============================================
+                    tipo = comprovante[
+                        "tipo"
+                    ]
 
-                for indice, comprovante in enumerate(
-                    comprovantes,
-                    start=1
-                ):
-
-                    tipo = comprovante["tipo"]
-
-                    numero_pagina = (
-                        comprovante["pagina"]
-                    )
+                    pagina = comprovante[
+                        "pagina"
+                    ]
 
                     contadores[tipo] += 1
 
-                    numero_tipo = (
-                        contadores[tipo]
-                    )
+                    numero = contadores[tipo]
 
-                    # ----------------------------------------
-                    # SOMENTE UMA PÁGINA
-                    # ----------------------------------------
-
-                    pdf_bytes = criar_pdf_da_pagina(
+                    dados = criar_pdf_pagina(
                         reader,
-                        numero_pagina
+                        pagina
                     )
 
-                    nome_pdf = (
-                        f"{tipo}_{numero_tipo:04d}.pdf"
+                    nome = (
+                        f"{tipo}_{numero:04d}.pdf"
                     )
 
-                    arquivos_saida.append(
+                    arquivos_comprovantes.append(
                         (
-                            nome_pdf,
-                            pdf_bytes
+                            nome,
+                            dados
                         )
                     )
 
                 # ============================================
-                # CRIA ZIPS
+                # ARQUIVOS SEM COMPROVANTE
                 # ============================================
 
-                zips = criar_zips_10mb(
-                    arquivos_saida
+                arquivos_sem_comprovante = []
+
+                for indice, pagina in enumerate(
+                    paginas_sem_comprovante,
+                    start=1
+                ):
+
+                    dados = (
+                        criar_pdf_pagina_sem_comprovante(
+                            reader,
+                            pagina
+                        )
+                    )
+
+                    nome = (
+                        f"PAGINA_SEM_COMPROVANTE_"
+                        f"{indice:04d}.pdf"
+                    )
+
+                    arquivos_sem_comprovante.append(
+                        (
+                            nome,
+                            dados
+                        )
+                    )
+
+                # ============================================
+                # GERAR ZIPS DOS COMPROVANTES
+                # ============================================
+
+                zips_comprovantes = dividir_em_zips(
+                    arquivos_comprovantes,
+                    "COMPROVANTES"
                 )
 
                 # ============================================
-                # SALVA RESULTADO
+                # GERAR ZIPS SEM COMPROVANTES
+                # ============================================
+
+                zips_sem_comprovantes = dividir_em_zips(
+                    arquivos_sem_comprovante,
+                    "SEM_COMPROVANTES"
+                )
+
+                # ============================================
+                # SALVAR RESULTADO
                 # ============================================
 
                 st.session_state[
-                    "comprovantes_zips"
-                ] = zips
+                    "processado"
+                ] = True
+
+                st.session_state[
+                    "zips_comprovantes"
+                ] = zips_comprovantes
+
+                st.session_state[
+                    "zips_sem_comprovantes"
+                ] = zips_sem_comprovantes
 
                 st.session_state[
                     "total_comprovantes"
                 ] = len(comprovantes)
 
                 st.session_state[
+                    "total_sem_comprovantes"
+                ] = len(
+                    paginas_sem_comprovante
+                )
+
+                st.session_state[
                     "contadores"
                 ] = contadores
 
-            except Exception as e:
+            except Exception as erro:
 
                 st.error(
-                    f"Erro ao processar o PDF: {e}"
+                    f"Erro ao processar o arquivo: {erro}"
                 )
 
 
@@ -365,20 +600,50 @@ if arquivo is not None:
 # RESULTADOS
 # ============================================================
 
-if "total_comprovantes" in st.session_state:
+if st.session_state.get(
+    "processado",
+    False
+):
+
+    # ========================================================
+    # RESUMO
+    # ========================================================
 
     st.success(
-        f"✅ {st.session_state['total_comprovantes']} "
-        f"comprovante(s) encontrado(s)."
+        "✅ Processamento concluído!"
     )
+
+    st.subheader(
+        "📊 Resumo"
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "Comprovantes",
+            st.session_state[
+                "total_comprovantes"
+            ]
+        )
+
+    with col2:
+
+        st.metric(
+            "Páginas sem comprovante",
+            st.session_state[
+                "total_sem_comprovantes"
+            ]
+        )
+
+    # ========================================================
+    # TIPOS
+    # ========================================================
 
     contadores = st.session_state[
         "contadores"
     ]
-
-    # ========================================================
-    # CONTADORES
-    # ========================================================
 
     col1, col2, col3 = st.columns(3)
 
@@ -400,49 +665,96 @@ if "total_comprovantes" in st.session_state:
 
         st.metric(
             "Transações bancárias",
-            contadores["TRANSACAO_BANCARIA"]
+            contadores[
+                "TRANSACAO_BANCARIA"
+            ]
         )
 
     st.divider()
 
     # ========================================================
-    # DOWNLOAD
+    # COMPROVANTES
     # ========================================================
 
     st.subheader(
-        "📦 Comprovantes"
+        "📦 ZIPs dos comprovantes"
     )
 
-    zips = st.session_state[
-        "comprovantes_zips"
-    ]
-
-    for indice, zip_bytes in enumerate(
-        zips,
-        start=1
-    ):
-
-        tamanho_mb = (
-            len(zip_bytes)
-            / (1024 * 1024)
-        )
-
-        st.download_button(
-            label=(
-                f"⬇️ Baixar "
-                f"COMPROVANTES_{indice:03d}.zip "
-                f"({tamanho_mb:.2f} MB)"
-            ),
-            data=zip_bytes,
-            file_name=(
-                f"COMPROVANTES_{indice:03d}.zip"
-            ),
-            mime="application/zip",
-            key=f"download_{indice}"
-        )
-
-    st.info(
-        f"{len(zips)} ZIP(s) gerado(s). "
-        "Os comprovantes são separados em arquivos "
-        "PDF individuais e agrupados em lotes de até 10 MB."
+    zips_comprovantes = (
+        st.session_state[
+            "zips_comprovantes"
+        ]
     )
+
+    if zips_comprovantes:
+
+        for nome_zip, dados_zip in (
+            zips_comprovantes
+        ):
+
+            tamanho = (
+                len(dados_zip)
+                / (1024 * 1024)
+            )
+
+            st.download_button(
+                label=(
+                    f"⬇️ {nome_zip} "
+                    f"({tamanho:.2f} MB)"
+                ),
+                data=dados_zip,
+                file_name=nome_zip,
+                mime="application/zip",
+                key=f"comp_{nome_zip}"
+            )
+
+    else:
+
+        st.warning(
+            "Nenhum comprovante encontrado."
+        )
+
+    # ========================================================
+    # SEM COMPROVANTES
+    # ========================================================
+
+    st.divider()
+
+    st.subheader(
+        "📁 ZIPs sem comprovantes"
+    )
+
+    zips_sem_comprovantes = (
+        st.session_state[
+            "zips_sem_comprovantes"
+        ]
+    )
+
+    if zips_sem_comprovantes:
+
+        for nome_zip, dados_zip in (
+            zips_sem_comprovantes
+        ):
+
+            tamanho = (
+                len(dados_zip)
+                / (1024 * 1024)
+            )
+
+            st.download_button(
+                label=(
+                    f"⬇️ {nome_zip} "
+                    f"({tamanho:.2f} MB)"
+                ),
+                data=dados_zip,
+                file_name=nome_zip,
+                mime="application/zip",
+                key=f"sem_{nome_zip}"
+            )
+
+    else:
+
+        st.success(
+            "Não existem páginas sem comprovante "
+            "dentro do Anexo."
+        )
