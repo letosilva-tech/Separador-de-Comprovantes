@@ -14,76 +14,91 @@ from pypdf import PdfReader, PdfWriter
 
 st.set_page_config(
     page_title="Separador de Comprovantes",
-    page_icon="📄"
+    page_icon="📄",
+    layout="wide"
 )
 
 
 # ============================================================
-# FUNÇÕES
+# NORMALIZAÇÃO DO TEXTO
 # ============================================================
-
-def remover_acentos(texto: str) -> str:
-    """
-    Remove acentos do texto.
-    
-    Exemplo:
-    TRANSFERÊNCIA -> TRANSFERENCIA
-    PAGAMENTO -> PAGAMENTO
-    """
-    return "".join(
-        caractere
-        for caractere in unicodedata.normalize("NFD", texto)
-        if unicodedata.category(caractere) != "Mn"
-    )
-
 
 def normalizar_texto(texto: str) -> str:
     """
-    Normaliza o texto para facilitar a identificação.
+    Normaliza o texto:
+    - transforma em maiúsculo
+    - remove acentos
+    - transforma quebras de linha em espaços
+    - remove espaços duplicados
     """
 
     texto = texto.upper()
 
     # Remove acentos
-    texto = remover_acentos(texto)
+    texto = unicodedata.normalize("NFD", texto)
 
-    # Remove quebras de linha e espaços duplicados
+    texto = "".join(
+        caractere
+        for caractere in texto
+        if unicodedata.category(caractere) != "Mn"
+    )
+
+    # Junta quebras de linha, tabs e espaços
     texto = re.sub(r"\s+", " ", texto)
 
     return texto.strip()
 
 
-def eh_inicio_comprovante(pagina) -> bool:
+# ============================================================
+# IDENTIFICA O TIPO DO COMPROVANTE
+# ============================================================
+
+def identificar_tipo_comprovante(texto: str):
     """
-    Identifica se a página representa o início
-    de um novo comprovante.
+    Identifica:
 
-    Tipos aceitos:
+    COMPROVANTE PIX
 
-    - COMPROVANTE PIX
-    - COMPROVANTE DE TRANSFERENCIA
+    COMPROVANTE DE TRANSFERENCIA
+
+    COMPROVANTE DE TRANSFERÊNCIA
+
+    Também aceita caso o PDF quebre as palavras
+    em linhas diferentes.
     """
-
-    texto = pagina.extract_text() or ""
 
     texto = normalizar_texto(texto)
 
-    tipos_comprovante = [
-        "COMPROVANTE PIX",
-        "COMPROVANTE DE TRANSFERENCIA",
-    ]
+    # --------------------------------------------------------
+    # PIX
+    # --------------------------------------------------------
 
-    for tipo in tipos_comprovante:
+    if re.search(
+        r"COMPROVANTE\s+PIX",
+        texto
+    ):
+        return "PIX"
 
-        if tipo in texto:
-            return True
+    # --------------------------------------------------------
+    # TRANSFERÊNCIA
+    # --------------------------------------------------------
 
-    return False
+    if re.search(
+        r"COMPROVANTE\s+(DE\s+)?TRANSFERENCIA",
+        texto
+    ):
+        return "TRANSFERENCIA"
+
+    return None
 
 
-def is_pagina_em_branco(pagina) -> bool:
+# ============================================================
+# VERIFICA SE A PÁGINA ESTÁ EM BRANCO
+# ============================================================
+
+def is_pagina_em_branco(pagina):
     """
-    Retorna True se a página não possuir
+    Retorna True somente se a página não possuir
     texto nem imagens.
     """
 
@@ -91,41 +106,21 @@ def is_pagina_em_branco(pagina) -> bool:
 
     tem_imagens = len(pagina.images) > 0
 
-    return not texto.strip() and not tem_imagens
+    return (
+        not texto.strip()
+        and not tem_imagens
+    )
 
 
-def identificar_tipo_comprovante(pagina) -> str:
-    """
-    Identifica o tipo do comprovante.
-    """
+# ============================================================
+# SEPARA OS COMPROVANTES
+# ============================================================
 
-    texto = pagina.extract_text() or ""
-
-    texto = normalizar_texto(texto)
-
-    if "COMPROVANTE PIX" in texto:
-        return "PIX"
-
-    if "COMPROVANTE DE TRANSFERENCIA" in texto:
-        return "TRANSFERENCIA"
-
-    return "OUTRO"
-
-
-def separar_comprovantes(leitor, progresso_barra, status_texto):
-    """
-    Percorre todas as páginas e agrupa as páginas
-    pertencentes a cada comprovante.
-
-    Um novo comprovante começa quando a página
-    contém:
-
-    COMPROVANTE PIX
-
-    ou
-
-    COMPROVANTE DE TRANSFERENCIA
-    """
+def separar_comprovantes(
+    leitor,
+    progresso,
+    status
+):
 
     comprovantes = []
 
@@ -133,32 +128,81 @@ def separar_comprovantes(leitor, progresso_barra, status_texto):
 
     tipo_atual = None
 
+    pagina_inicio = None
+
     paginas_brancas = 0
+
+    paginas_sem_comprovante = []
 
     total_paginas = len(leitor.pages)
 
-    for idx, pagina in enumerate(leitor.pages):
+    # ========================================================
+    # PERCORRE TODAS AS PÁGINAS
+    # ========================================================
 
-        numero_pagina = idx + 1
+    for indice, pagina in enumerate(leitor.pages):
+
+        numero_pagina = indice + 1
 
         # ----------------------------------------------------
         # Atualiza progresso
         # ----------------------------------------------------
 
-        percentual = numero_pagina / total_paginas
-
-        progresso_barra.progress(
-            percentual
+        progresso.progress(
+            numero_pagina / total_paginas
         )
 
-        status_texto.text(
+        status.text(
             f"🔍 Analisando página "
-            f"{numero_pagina} de {total_paginas}..."
+            f"{numero_pagina} de "
+            f"{total_paginas}..."
         )
 
         # ----------------------------------------------------
-        # Verifica página em branco
+        # Extrai texto
         # ----------------------------------------------------
+
+        texto = pagina.extract_text() or ""
+
+        # ----------------------------------------------------
+        # Verifica se começa novo comprovante
+        # ----------------------------------------------------
+
+        tipo = identificar_tipo_comprovante(
+            texto
+        )
+
+        # ====================================================
+        # NOVO COMPROVANTE
+        # ====================================================
+
+        if tipo is not None:
+
+            # Se já havia um comprovante aberto,
+            # salva o anterior
+            if comprovante_atual:
+
+                comprovantes.append({
+                    "tipo": tipo_atual,
+                    "paginas": comprovante_atual,
+                    "pagina_inicio": pagina_inicio,
+                    "pagina_fim": numero_pagina - 1
+                })
+
+            # Inicia novo comprovante
+            comprovante_atual = [
+                pagina
+            ]
+
+            tipo_atual = tipo
+
+            pagina_inicio = numero_pagina
+
+            continue
+
+        # ====================================================
+        # PÁGINA EM BRANCO
+        # ====================================================
 
         if is_pagina_em_branco(pagina):
 
@@ -166,70 +210,70 @@ def separar_comprovantes(leitor, progresso_barra, status_texto):
 
             continue
 
-        # ----------------------------------------------------
-        # Verifica se é início de novo comprovante
-        # ----------------------------------------------------
+        # ====================================================
+        # CONTINUAÇÃO DO COMPROVANTE
+        # ====================================================
 
-        if eh_inicio_comprovante(pagina):
+        if comprovante_atual:
 
-            # Se já existe comprovante em andamento,
-            # salva o comprovante anterior
-            if comprovante_atual:
-
-                comprovantes.append({
-                    "tipo": tipo_atual,
-                    "paginas": comprovante_atual
-                })
-
-            # Inicia novo comprovante
-            comprovante_atual = [pagina]
-
-            tipo_atual = identificar_tipo_comprovante(
+            comprovante_atual.append(
                 pagina
             )
 
         else:
 
-            # Página pertence ao comprovante atual
-            if comprovante_atual:
+            # Página que apareceu antes de qualquer
+            # comprovante ser encontrado
+            paginas_sem_comprovante.append(
+                numero_pagina
+            )
 
-                comprovante_atual.append(
-                    pagina
-                )
-
-    # --------------------------------------------------------
-    # Salva o último comprovante
-    # --------------------------------------------------------
+    # ========================================================
+    # SALVA O ÚLTIMO COMPROVANTE
+    # ========================================================
 
     if comprovante_atual:
 
         comprovantes.append({
             "tipo": tipo_atual,
-            "paginas": comprovante_atual
+            "paginas": comprovante_atual,
+            "pagina_inicio": pagina_inicio,
+            "pagina_fim": total_paginas
         })
 
-    return comprovantes, paginas_brancas
+    return (
+        comprovantes,
+        paginas_brancas,
+        paginas_sem_comprovante
+    )
 
 
 # ============================================================
-# INTERFACE
+# TELA
 # ============================================================
 
-st.title("📄 Separador de Comprovantes")
+st.title(
+    "📄 Separador de Comprovantes"
+)
 
 st.write(
     """
     Selecione um único arquivo PDF contendo vários comprovantes.
 
-    O sistema identifica automaticamente os seguintes tipos:
+    O sistema identifica automaticamente:
 
-    - **COMPROVANTE PIX**
-    - **COMPROVANTE DE TRANSFERÊNCIA**
+    🔵 **COMPROVANTE PIX**
+
+    🟢 **COMPROVANTE DE TRANSFERÊNCIA**
 
     Cada comprovante pode possuir uma ou várias páginas.
     """
 )
 
+
+# ============================================================
+# UPLOAD
+# ============================================================
 
 arquivo_pdf = st.file_uploader(
     "Selecione o arquivo PDF",
@@ -238,7 +282,7 @@ arquivo_pdf = st.file_uploader(
 
 
 # ============================================================
-# RESET
+# LIMPA RESULTADOS QUANDO O ARQUIVO É REMOVIDO
 # ============================================================
 
 if arquivo_pdf is None:
@@ -254,17 +298,22 @@ if arquivo_pdf is None:
     )
 
     st.session_state.pop(
-        "ignoradas",
-        None
-    )
-
-    st.session_state.pop(
         "pix",
         None
     )
 
     st.session_state.pop(
         "transferencias",
+        None
+    )
+
+    st.session_state.pop(
+        "ignoradas",
+        None
+    )
+
+    st.session_state.pop(
+        "detalhes",
         None
     )
 
@@ -277,9 +326,13 @@ if arquivo_pdf is not None:
 
     try:
 
-        leitor = PdfReader(arquivo_pdf)
+        leitor = PdfReader(
+            arquivo_pdf
+        )
 
-        total_paginas = len(leitor.pages)
+        total_paginas = len(
+            leitor.pages
+        )
 
         st.success(
             f"✅ Arquivo selecionado: "
@@ -287,74 +340,83 @@ if arquivo_pdf is not None:
         )
 
         st.info(
-            f"📄 O arquivo original contém "
-            f"{total_paginas} páginas."
+            f"📄 O arquivo possui "
+            f"**{total_paginas} páginas**."
         )
+
+        # ====================================================
+        # BOTÃO
+        # ====================================================
 
         if st.button(
             "🔄 Separar Comprovantes",
-            type="primary"
+            type="primary",
+            use_container_width=True
         ):
 
             inicio = time.time()
 
             st.divider()
 
-            status_texto = st.empty()
+            status = st.empty()
 
-            progresso_barra = st.progress(0)
+            progresso = st.progress(0)
 
-            # ------------------------------------------------
-            # Identificação dos comprovantes
-            # ------------------------------------------------
+            # =================================================
+            # ANALISA PDF
+            # =================================================
 
-            comprovantes, paginas_brancas = (
-                separar_comprovantes(
-                    leitor,
-                    progresso_barra,
-                    status_texto
-                )
+            (
+                comprovantes,
+                paginas_brancas,
+                paginas_sem_comprovante
+            ) = separar_comprovantes(
+                leitor,
+                progresso,
+                status
             )
 
-            # ------------------------------------------------
-            # Nenhum comprovante encontrado
-            # ------------------------------------------------
+            # =================================================
+            # NENHUM ENCONTRADO
+            # =================================================
 
             if not comprovantes:
 
-                status_texto.empty()
+                status.error(
+                    "❌ Nenhum comprovante foi encontrado."
+                )
 
                 st.warning(
-                    "⚠️ Nenhum comprovante foi identificado."
+                    """
+                    Não foi possível identificar:
+
+                    • COMPROVANTE PIX
+
+                    • COMPROVANTE DE TRANSFERÊNCIA
+                    """
                 )
 
                 st.info(
                     """
-                    O sistema procura pelas expressões:
-
-                    • COMPROVANTE PIX
-
-                    • COMPROVANTE DE TRANSFERENCIA
-
-                    Verifique se o PDF permite selecionar
-                    o texto. Se o PDF for somente imagem,
+                    Se o PDF for escaneado como imagem,
                     será necessário utilizar OCR.
                     """
                 )
 
             else:
 
-                # ------------------------------------------------
-                # Cria ZIP
-                # ------------------------------------------------
+                # =================================================
+                # CRIA ZIP
+                # =================================================
 
-                status_texto.text(
-                    "📦 Gerando arquivos PDF..."
+                status.text(
+                    "📦 Criando arquivos dos comprovantes..."
                 )
 
                 zip_buffer = BytesIO()
 
                 quantidade_pix = 0
+
                 quantidade_transferencia = 0
 
                 with zipfile.ZipFile(
@@ -363,22 +425,26 @@ if arquivo_pdf is not None:
                     zipfile.ZIP_DEFLATED
                 ) as zip_file:
 
+                    # ---------------------------------------------
+                    # Percorre cada comprovante
+                    # ---------------------------------------------
+
                     for numero, comprovante in enumerate(
                         comprovantes,
                         start=1
                     ):
 
-                        paginas = comprovante[
-                            "paginas"
-                        ]
-
                         tipo = comprovante[
                             "tipo"
                         ]
 
-                        # ----------------------------------------
-                        # Conta os tipos
-                        # ----------------------------------------
+                        paginas = comprovante[
+                            "paginas"
+                        ]
+
+                        # -----------------------------------------
+                        # Contadores
+                        # -----------------------------------------
 
                         if tipo == "PIX":
 
@@ -388,9 +454,9 @@ if arquivo_pdf is not None:
 
                             quantidade_transferencia += 1
 
-                        # ----------------------------------------
+                        # -----------------------------------------
                         # Cria PDF
-                        # ----------------------------------------
+                        # -----------------------------------------
 
                         escritor = PdfWriter()
 
@@ -406,39 +472,43 @@ if arquivo_pdf is not None:
                             pdf_buffer
                         )
 
-                        # ----------------------------------------
+                        # -----------------------------------------
                         # Nome do arquivo
-                        # ----------------------------------------
+                        # -----------------------------------------
 
                         if tipo == "PIX":
 
-                            nome_pdf = (
+                            nome = (
                                 f"comprovante_PIX_"
                                 f"{numero:03d}.pdf"
                             )
 
                         elif tipo == "TRANSFERENCIA":
 
-                            nome_pdf = (
+                            nome = (
                                 f"comprovante_TRANSFERENCIA_"
                                 f"{numero:03d}.pdf"
                             )
 
                         else:
 
-                            nome_pdf = (
+                            nome = (
                                 f"comprovante_"
                                 f"{numero:03d}.pdf"
                             )
 
+                        # -----------------------------------------
+                        # Adiciona ao ZIP
+                        # -----------------------------------------
+
                         zip_file.writestr(
-                            nome_pdf,
+                            nome,
                             pdf_buffer.getvalue()
                         )
 
-                # ------------------------------------------------
-                # Salva resultados
-                # ------------------------------------------------
+                # =================================================
+                # SALVA RESULTADOS
+                # =================================================
 
                 st.session_state[
                     "zip_comprovantes"
@@ -449,10 +519,6 @@ if arquivo_pdf is not None:
                 ] = len(comprovantes)
 
                 st.session_state[
-                    "ignoradas"
-                ] = paginas_brancas
-
-                st.session_state[
                     "pix"
                 ] = quantidade_pix
 
@@ -460,23 +526,34 @@ if arquivo_pdf is not None:
                     "transferencias"
                 ] = quantidade_transferencia
 
-                tempo_total = time.time() - inicio
+                st.session_state[
+                    "ignoradas"
+                ] = paginas_brancas
 
-                progresso_barra.progress(
-                    1.0
-                )
+                st.session_state[
+                    "detalhes"
+                ] = comprovantes
 
-                status_texto.text(
+                # =================================================
+                # TEMPO
+                # =================================================
+
+                tempo = time.time() - inicio
+
+                progresso.progress(1.0)
+
+                status.success(
                     "✅ Processamento concluído!"
                 )
 
-                # ------------------------------------------------
-                # Resultado
-                # ------------------------------------------------
+                # =================================================
+                # RESUMO
+                # =================================================
 
-                st.success(
-                    f"✅ {len(comprovantes)} "
-                    f"comprovante(s) identificado(s)."
+                st.divider()
+
+                st.subheader(
+                    "📊 Resultado"
                 )
 
                 col1, col2, col3 = st.columns(3)
@@ -498,21 +575,67 @@ if arquivo_pdf is not None:
                 with col3:
 
                     st.metric(
-                        "Transferência",
+                        "Transferências",
                         quantidade_transferencia
                     )
 
                 st.info(
                     f"⏱️ Tempo de processamento: "
-                    f"{tempo_total:.1f} segundos"
+                    f"{tempo:.1f} segundos"
                 )
+
+                # =================================================
+                # PÁGINAS EM BRANCO
+                # =================================================
 
                 if paginas_brancas > 0:
 
                     st.warning(
-                        f"🗑️ {paginas_brancas} "
+                        f"⚠️ {paginas_brancas} "
                         f"página(s) em branco foram ignoradas."
                     )
+
+                # =================================================
+                # DIAGNÓSTICO
+                # =================================================
+
+                st.divider()
+
+                st.subheader(
+                    "🔎 Comprovantes identificados"
+                )
+
+                dados = []
+
+                for numero, comprovante in enumerate(
+                    comprovantes,
+                    start=1
+                ):
+
+                    dados.append({
+                        "Nº": numero,
+                        "Tipo": comprovante[
+                            "tipo"
+                        ],
+                        "Página inicial": comprovante[
+                            "pagina_inicio"
+                        ],
+                        "Página final": comprovante[
+                            "pagina_fim"
+                        ],
+                        "Páginas": len(
+                            comprovante[
+                                "paginas"
+                            ]
+                        )
+                    })
+
+                st.dataframe(
+                    dados,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
 
     except Exception as erro:
 
@@ -527,38 +650,39 @@ if arquivo_pdf is not None:
 
 if (
     arquivo_pdf is not None
-    and "zip_comprovantes" in st.session_state
+    and "zip_comprovantes"
+    in st.session_state
 ):
 
     st.divider()
+
+    st.subheader(
+        "📦 Download"
+    )
 
     quantidade = st.session_state[
         "quantidade"
     ]
 
-    pix = st.session_state.get(
-        "pix",
-        0
-    )
+    pix = st.session_state[
+        "pix"
+    ]
 
-    transferencias = st.session_state.get(
-        "transferencias",
-        0
-    )
+    transferencias = st.session_state[
+        "transferencias"
+    ]
 
     st.success(
-        f"📦 {quantidade} comprovante(s) "
-        f"pronto(s) para download."
+        f"✅ {quantidade} comprovante(s) "
+        f"foram separados."
     )
 
     st.write(
-        f"""
-        **Resumo:**
+        f"🔵 PIX: **{pix}**"
+    )
 
-        - 🔵 PIX: **{pix}**
-        - 🟢 Transferências: **{transferencias}**
-        - 📄 Total: **{quantidade}**
-        """
+    st.write(
+        f"🟢 Transferências: **{transferencias}**"
     )
 
     st.download_button(
@@ -567,5 +691,6 @@ if (
             "zip_comprovantes"
         ],
         file_name="comprovantes_separados.zip",
-        mime="application/zip"
+        mime="application/zip",
+        use_container_width=True
     )
