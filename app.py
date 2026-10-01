@@ -1,4 +1,3 @@
-```python
 def separar_comprovantes(
     leitor,
     progresso,
@@ -10,10 +9,6 @@ def separar_comprovantes(
     paginas_sem_comprovante = []
 
     total_paginas = len(leitor.pages)
-
-    # ========================================================
-    # ANALISA CADA PÁGINA
-    # ========================================================
 
     for indice, pagina in enumerate(leitor.pages):
 
@@ -28,20 +23,12 @@ def separar_comprovantes(
             f"{numero_pagina} de {total_paginas}..."
         )
 
-        # ----------------------------------------------------
-        # EXTRAI TEXTO
-        # ----------------------------------------------------
-
         texto = pagina.extract_text() or ""
-
-        # ----------------------------------------------------
-        # IDENTIFICA O TIPO DO COMPROVANTE
-        # ----------------------------------------------------
 
         tipo = identificar_tipo_comprovante(texto)
 
         # ====================================================
-        # É COMPROVANTE
+        # ENCONTROU UM COMPROVANTE
         # ====================================================
 
         if tipo is not None:
@@ -80,4 +67,3 @@ def separar_comprovantes(
         paginas_brancas,
         paginas_sem_comprovante
     )
-```
