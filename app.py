@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 from pypdf import PdfReader, PdfWriter
 from io import BytesIO
@@ -103,7 +104,11 @@ def gerar_pdf(reader, paginas):
 def agrupar_paginas(
     reader,
     paginas,
-    prefixo
+    prefixo,
+    progress_bar=None,
+    status_box=None,
+    etapa_atual=0,
+    total_etapas=1
 ):
 
     arquivos = []
@@ -112,7 +117,44 @@ def agrupar_paginas(
 
     numero_arquivo = 1
 
-    for numero_pagina in paginas:
+    total_paginas = len(paginas)
+
+    if total_paginas == 0:
+
+        if progress_bar:
+
+            progresso = etapa_atual / total_etapas
+
+            progress_bar.progress(
+                progresso,
+                text=(
+                    f"Etapa {etapa_atual}/"
+                    f"{total_etapas}"
+                )
+            )
+
+        return arquivos
+
+    for indice, numero_pagina in enumerate(
+        paginas,
+        start=1
+    ):
+
+        # ----------------------------------------------------
+        # Atualiza status
+        # ----------------------------------------------------
+
+        if status_box:
+
+            status_box.info(
+                f"📦 **Agrupando {prefixo}**\n\n"
+                f"📄 Página {indice} de "
+                f"{total_paginas}\n\n"
+                f"📁 Arquivos criados: "
+                f"**{len(arquivos)}**\n\n"
+                f"🗂️ Arquivo atual: "
+                f"**{numero_arquivo:03d}**"
+            )
 
         # ----------------------------------------------------
         # Testa adicionar a página atual
@@ -208,6 +250,28 @@ def agrupar_paginas(
 
                 paginas_atual = []
 
+        # ----------------------------------------------------
+        # Progresso da etapa
+        # ----------------------------------------------------
+
+        progresso_etapa = (
+            indice / total_paginas
+        )
+
+        progresso_total = (
+            etapa_atual + progresso_etapa
+        ) / total_etapas
+
+        if progress_bar:
+
+            progress_bar.progress(
+                progresso_total,
+                text=(
+                    f"Processamento — "
+                    f"{progresso_total:.0%}"
+                )
+            )
+
     # --------------------------------------------------------
     # Salva o último PDF
     # --------------------------------------------------------
@@ -238,9 +302,15 @@ def agrupar_paginas(
 # PROCESSA O PDF
 # ============================================================
 
-def processar_pdf(arquivo):
+def processar_pdf(
+    arquivo,
+    progress_bar,
+    status_box
+):
 
     reader = PdfReader(arquivo)
+
+    total_paginas = len(reader.pages)
 
     paginas_comprovantes = []
 
@@ -253,12 +323,33 @@ def processar_pdf(arquivo):
     }
 
     # ========================================================
+    # INFORMAÇÕES INICIAIS
+    # ========================================================
+
+    status_box.info(
+        f"📄 **Arquivo:** {arquivo.name}\n\n"
+        f"📑 **Total de páginas:** "
+        f"{total_paginas}\n\n"
+        "🔎 Preparando análise..."
+    )
+
+    progress_bar.progress(
+        0,
+        text="Preparando processamento..."
+    )
+
+    # ========================================================
     # PERCORRE TODAS AS PÁGINAS
     # ========================================================
 
     for numero_pagina, pagina in enumerate(
-        reader.pages
+        reader.pages,
+        start=1
     ):
+
+        # ----------------------------------------------------
+        # Extrai texto
+        # ----------------------------------------------------
 
         try:
 
@@ -268,50 +359,147 @@ def processar_pdf(arquivo):
 
             texto = ""
 
+        # ----------------------------------------------------
+        # Identifica comprovante
+        # ----------------------------------------------------
+
         tipo = identificar_comprovante(
             texto
         )
 
-        # ====================================================
-        # COMPROVANTE
-        # ====================================================
+        # ----------------------------------------------------
+        # Comprovante encontrado
+        # ----------------------------------------------------
 
         if tipo:
 
             paginas_comprovantes.append(
-                numero_pagina
+                numero_pagina - 1
             )
 
             contadores[tipo] += 1
 
-        # ====================================================
-        # SEM COMPROVANTE
-        # ====================================================
+        # ----------------------------------------------------
+        # Página sem comprovante
+        # ----------------------------------------------------
 
         else:
 
             paginas_sem_comprovantes.append(
-                numero_pagina
+                numero_pagina - 1
             )
 
+        # ----------------------------------------------------
+        # Calcula progresso
+        # ----------------------------------------------------
+
+        progresso = (
+            numero_pagina / total_paginas
+        )
+
+        # ----------------------------------------------------
+        # Atualiza barra
+        # ----------------------------------------------------
+
+        progress_bar.progress(
+            progresso * 0.70,
+            text=(
+                f"🔎 Analisando páginas — "
+                f"{numero_pagina}/{total_paginas} "
+                f"— {progresso:.0%}"
+            )
+        )
+
+        # ----------------------------------------------------
+        # Atualiza informações
+        # ----------------------------------------------------
+
+        status_box.info(
+            f"🔎 **Analisando página "
+            f"{numero_pagina} de "
+            f"{total_paginas}**\n\n"
+
+            f"📋 PIX: "
+            f"**{contadores['PIX']}**\n\n"
+
+            f"🔄 Transferências: "
+            f"**{contadores['TRANSFERENCIA']}**\n\n"
+
+            f"🏦 Transações bancárias: "
+            f"**{contadores['TRANSACAO_BANCARIA']}**\n\n"
+
+            f"📁 Sem comprovante: "
+            f"**{len(paginas_sem_comprovantes)}**"
+        )
+
     # ========================================================
-    # GERA PDFs DE COMPROVANTES
+    # ANÁLISE CONCLUÍDA
+    # ========================================================
+
+    total_comprovantes = sum(
+        contadores.values()
+    )
+
+    status_box.success(
+        "✅ **Análise das páginas concluída!**\n\n"
+
+        f"📋 Total de comprovantes: "
+        f"**{total_comprovantes}**\n\n"
+
+        f"📄 Páginas sem comprovantes: "
+        f"**{len(paginas_sem_comprovantes)}**\n\n"
+
+        "📦 Iniciando agrupamento dos PDFs..."
+    )
+
+    # ========================================================
+    # AGRUPA COMPROVANTES
     # ========================================================
 
     arquivos_comprovantes = agrupar_paginas(
         reader,
         paginas_comprovantes,
-        "COMPROVANTES"
+        "COMPROVANTES",
+        progress_bar,
+        status_box,
+        etapa_atual=1,
+        total_etapas=2
     )
 
     # ========================================================
-    # GERA PDFs SEM COMPROVANTES
+    # AGRUPA PÁGINAS SEM COMPROVANTES
     # ========================================================
 
     arquivos_sem_comprovantes = agrupar_paginas(
         reader,
         paginas_sem_comprovantes,
-        "SEM_COMPROVANTES"
+        "SEM_COMPROVANTES",
+        progress_bar,
+        status_box,
+        etapa_atual=1,
+        total_etapas=2
+    )
+
+    # ========================================================
+    # PROCESSAMENTO FINALIZADO
+    # ========================================================
+
+    progress_bar.progress(
+        1.0,
+        text="✅ Processamento concluído — 100%"
+    )
+
+    status_box.success(
+        "🎉 **Processamento concluído!**\n\n"
+
+        f"📋 Comprovantes encontrados: "
+        f"**{total_comprovantes}**\n\n"
+
+        f"📦 PDFs de comprovantes: "
+        f"**{len(arquivos_comprovantes)}**\n\n"
+
+        f"📁 PDFs sem comprovantes: "
+        f"**{len(arquivos_sem_comprovantes)}**"
     )
 
     return (
@@ -321,283 +509,5 @@ def processar_pdf(arquivo):
     )
 
 
-# ============================================================
-# STREAMLIT
-# ============================================================
-
-st.set_page_config(
-    page_title="Agrupador de Comprovantes",
-    page_icon="📄",
-    layout="centered"
-)
-
-
-st.title(
-    "📄 Agrupador de Comprovantes"
-)
-
-st.write(
-    "O sistema separa as páginas de comprovantes das "
-    "demais páginas e agrupa cada grupo em PDFs de até 10 MB."
-)
-
-
-# ============================================================
-# NOMENCLATURAS
-# ============================================================
-
-with st.expander(
-    "🔎 Nomenclaturas identificadas"
-):
-
-    st.write(
-        "1. COMPROVANTE PIX"
-    )
-
-    st.write(
-        "2. COMPROVANTE DE TRANSFERENCIA"
-    )
-
-    st.write(
-        "3. COMPROVANTE DE TRANSACAO BANCARIA"
-    )
-
-
-# ============================================================
-# UPLOAD
-# ============================================================
-
-arquivo = st.file_uploader(
-    "Selecione o PDF",
-    type=["pdf"]
-)
-
-
-# ============================================================
-# PROCESSAMENTO
-# ============================================================
-
-if arquivo is not None:
-
-    if st.button(
-        "🔎 Processar PDF",
-        type="primary"
-    ):
-
-        with st.spinner(
-            "Processando e agrupando as páginas..."
-        ):
-
-            try:
-
-                (
-                    arquivos_comprovantes,
-                    arquivos_sem_comprovantes,
-                    contadores
-                ) = processar_pdf(
-                    arquivo
-                )
-
-                # --------------------------------------------
-                # SALVA RESULTADOS
-                # --------------------------------------------
-
-                st.session_state[
-                    "processado"
-                ] = True
-
-                st.session_state[
-                    "arquivos_comprovantes"
-                ] = arquivos_comprovantes
-
-                st.session_state[
-                    "arquivos_sem_comprovantes"
-                ] = arquivos_sem_comprovantes
-
-                st.session_state[
-                    "contadores"
-                ] = contadores
-
-                st.session_state[
-                    "total_comprovantes"
-                ] = sum(
-                    contadores.values()
-                )
-
-            except Exception as erro:
-
-                st.error(
-                    f"Erro ao processar o PDF: {erro}"
-                )
-
-
-# ============================================================
-# RESULTADO
-# ============================================================
-
-if st.session_state.get(
-    "processado",
-    False
-):
-
-    st.success(
-        "✅ Processamento concluído!"
-    )
-
-    # ========================================================
-    # RESUMO
-    # ========================================================
-
-    contadores = st.session_state[
-        "contadores"
-    ]
-
-    total_comprovantes = (
-        st.session_state[
-            "total_comprovantes"
-        ]
-    )
-
-    arquivos_comprovantes = (
-        st.session_state[
-            "arquivos_comprovantes"
-        ]
-    )
-
-    arquivos_sem_comprovantes = (
-        st.session_state[
-            "arquivos_sem_comprovantes"
-        ]
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        st.metric(
-            "Total de comprovantes",
-            total_comprovantes
-        )
-
-    with col2:
-
-        st.metric(
-            "Arquivos de comprovantes",
-            len(arquivos_comprovantes)
-        )
-
-    with col3:
-
-        st.metric(
-            "Arquivos sem comprovantes",
-            len(arquivos_sem_comprovantes)
-        )
-
-    # ========================================================
-    # TIPOS
-    # ========================================================
-
-    st.subheader(
-        "📋 Comprovantes encontrados"
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        st.metric(
-            "PIX",
-            contadores["PIX"]
-        )
-
-    with col2:
-
-        st.metric(
-            "Transferência",
-            contadores["TRANSFERENCIA"]
-        )
-
-    with col3:
-
-        st.metric(
-            "Transação bancária",
-            contadores[
-                "TRANSACAO_BANCARIA"
-            ]
-        )
-
-    # ========================================================
-    # COMPROVANTES
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "📦 PDFs com comprovantes"
-    )
-
-    if arquivos_comprovantes:
-
-        for nome, dados in (
-            arquivos_comprovantes
-        ):
-
-            tamanho_mb = (
-                len(dados)
-                / (1024 * 1024)
-            )
-
-            st.download_button(
-                label=(
-                    f"⬇️ {nome} "
-                    f"— {tamanho_mb:.2f} MB"
-                ),
-                data=dados,
-                file_name=nome,
-                mime="application/pdf",
-                key=f"comp_{nome}"
-            )
-
-    else:
-
-        st.warning(
-            "Nenhum comprovante encontrado."
-        )
-
-    # ========================================================
-    # SEM COMPROVANTES
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "📁 PDFs sem comprovantes"
-    )
-
-    if arquivos_sem_comprovantes:
-
-        for nome, dados in (
-            arquivos_sem_comprovantes
-        ):
-
-            tamanho_mb = (
-                len(dados)
-                / (1024 * 1024)
-            )
-
-            st.download_button(
-                label=(
-                    f"⬇️ {nome} "
-                    f"— {tamanho_mb:.2f} MB"
-                ),
-                data=dados,
-                file_name=nome,
-                mime="application/pdf",
-                key=f"sem_{nome}"
-            )
-
-    else:
-
-        st.success(
-            "Não existem páginas sem comprovantes."
-        )
+# ===============
+```
