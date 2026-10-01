@@ -11,10 +11,6 @@ import time
 from pypdf import PdfReader, PdfWriter
 
 
-# ============================================================
-# CONFIGURAÇÃO
-# ============================================================
-
 st.set_page_config(
     page_title="Separador de Comprovantes",
     page_icon="📄",
@@ -22,19 +18,13 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# CONSTANTES
-# ============================================================
 
 LIMITE_ZIP = 10 * 1024 * 1024
 
-# Margem para tentar manter o ZIP abaixo de 10 MB
+
 LIMITE_SEGURANCA = 9_500_000
 
 
-# ============================================================
-# NORMALIZAÇÃO
-# ============================================================
 
 def normalizar_texto(texto):
 
@@ -69,9 +59,6 @@ def normalizar_texto(texto):
     return texto.strip()
 
 
-# ============================================================
-# IDENTIFICA COMPROVANTE
-# ============================================================
 
 def identificar_comprovante(texto):
 
@@ -80,9 +67,6 @@ def identificar_comprovante(texto):
     if not texto:
         return None
 
-    # ========================================================
-    # PIX
-    # ========================================================
 
     if re.search(
         r"\bCOMPROVANTE\s+(?:DE\s+)?PIX\b",
@@ -91,10 +75,6 @@ def identificar_comprovante(texto):
         return "PIX"
 
 
-    # ========================================================
-    # TRANSFERÊNCIA
-    # ========================================================
-
     if re.search(
         r"\bCOMPROVANTE\s+(?:DE\s+)?TRANSFERENCIA\b",
         texto
@@ -102,9 +82,6 @@ def identificar_comprovante(texto):
         return "TRANSFERENCIA"
 
 
-    # ========================================================
-    # TRANSAÇÃO BANCÁRIA
-    # ========================================================
 
     if re.search(
         r"\bCOMPROVANTE\s+(?:DE\s+)?TRANSACAO\s+BANCARIA\b",
@@ -115,10 +92,6 @@ def identificar_comprovante(texto):
 
     return None
 
-
-# ============================================================
-# FORMATA TAMANHO
-# ============================================================
 
 def formatar_tamanho(tamanho):
 
@@ -131,9 +104,6 @@ def formatar_tamanho(tamanho):
     return f"{tamanho / (1024 * 1024):.2f} MB"
 
 
-# ============================================================
-# NOME SEGURO
-# ============================================================
 
 def nome_seguro(nome):
 
@@ -157,10 +127,6 @@ def nome_seguro(nome):
     return nome.strip("._") or "arquivo"
 
 
-# ============================================================
-# SALVA PDF
-# ============================================================
-
 def salvar_writer(writer, caminho):
 
     with open(
@@ -173,10 +139,6 @@ def salvar_writer(writer, caminho):
         )
 
 
-# ============================================================
-# PROCESSAMENTO PRINCIPAL
-# ============================================================
-
 def processar_pdf(
     caminho_pdf,
     pasta_trabalho,
@@ -185,11 +147,6 @@ def processar_pdf(
 ):
 
     inicio = time.time()
-
-
-    # ========================================================
-    # ABRE PDF
-    # ========================================================
 
     status.info(
         "📖 Abrindo PDF..."
@@ -212,10 +169,6 @@ def processar_pdf(
         )
 
 
-    # ========================================================
-    # PASTAS
-    # ========================================================
-
     pasta_saida = os.path.join(
         pasta_trabalho,
         "saida"
@@ -227,18 +180,10 @@ def processar_pdf(
     )
 
 
-    # ========================================================
-    # WRITERS
-    # ========================================================
-
     writer_comprovantes = PdfWriter()
 
     writer_sem_comprovantes = PdfWriter()
 
-
-    # ========================================================
-    # CONTADORES
-    # ========================================================
 
     total_comprovantes = 0
 
@@ -252,10 +197,6 @@ def processar_pdf(
 
     diagnostico = []
 
-
-    # ========================================================
-    # ANALISA PÁGINA POR PÁGINA
-    # ========================================================
 
     for indice in range(
         total_paginas
@@ -281,10 +222,6 @@ def processar_pdf(
         ]
 
 
-        # ====================================================
-        # EXTRAI TEXTO
-        # ====================================================
-
         try:
 
             texto = pagina.extract_text() or ""
@@ -303,10 +240,6 @@ def processar_pdf(
             texto
         )
 
-
-        # ====================================================
-        # É COMPROVANTE
-        # ====================================================
 
         if tipo:
 
@@ -332,9 +265,7 @@ def processar_pdf(
                 quantidade_transacao += 1
 
 
-        # ====================================================
-        # NÃO É COMPROVANTE
-        # ====================================================
+
 
         else:
 
@@ -349,9 +280,6 @@ def processar_pdf(
         gc.collect()
 
 
-    # ========================================================
-    # CAMINHOS DOS PDFs FINAIS
-    # ========================================================
 
     caminho_comprovantes = os.path.join(
         pasta_saida,
@@ -363,10 +291,6 @@ def processar_pdf(
         "SEM_COMPROVANTES.pdf"
     )
 
-
-    # ========================================================
-    # SALVA PDF DOS COMPROVANTES
-    # ========================================================
 
     if total_comprovantes > 0:
 
@@ -380,9 +304,6 @@ def processar_pdf(
         )
 
 
-    # ========================================================
-    # SALVA PDF SEM COMPROVANTES
-    # ========================================================
 
     if total_sem_comprovantes > 0:
 
@@ -404,10 +325,6 @@ def processar_pdf(
 
     gc.collect()
 
-
-    # ========================================================
-    # TAMANHOS
-    # ========================================================
 
     tamanho_comprovantes = 0
 
@@ -432,9 +349,6 @@ def processar_pdf(
         )
 
 
-    # ========================================================
-    # CRIA ZIP
-    # ========================================================
 
     caminho_zip_comprovantes = os.path.join(
         pasta_saida,
@@ -446,10 +360,6 @@ def processar_pdf(
         "SEM_COMPROVANTES.zip"
     )
 
-
-    # ========================================================
-    # ZIP DOS COMPROVANTES
-    # ========================================================
 
     if os.path.exists(
         caminho_comprovantes
@@ -468,10 +378,6 @@ def processar_pdf(
             )
 
 
-    # ========================================================
-    # ZIP SEM COMPROVANTES
-    # ========================================================
-
     if os.path.exists(
         caminho_sem_comprovantes
     ):
@@ -487,11 +393,6 @@ def processar_pdf(
                 caminho_sem_comprovantes,
                 arcname="SEM_COMPROVANTES.pdf"
             )
-
-
-    # ========================================================
-    # TAMANHOS DOS ZIPs
-    # ========================================================
 
     tamanho_zip_comprovantes = 0
 
@@ -573,9 +474,6 @@ def processar_pdf(
     }
 
 
-# ============================================================
-# INTERFACE
-# ============================================================
 
 st.title(
     "📄 Separador de Comprovantes"
@@ -606,9 +504,6 @@ st.info(
 )
 
 
-# ============================================================
-# UPLOAD
-# ============================================================
 
 arquivo_enviado = st.file_uploader(
     "Selecione o PDF que deseja processar",
@@ -645,9 +540,6 @@ if arquivo_enviado is not None:
 
         try:
 
-            # =================================================
-            # SALVA ORIGINAL
-            # =================================================
 
             with open(
                 caminho_pdf_original,
@@ -666,9 +558,6 @@ if arquivo_enviado is not None:
             status = st.empty()
 
 
-            # =================================================
-            # PROCESSA
-            # =================================================
 
             resultado = processar_pdf(
                 caminho_pdf_original,
@@ -688,9 +577,6 @@ if arquivo_enviado is not None:
             )
 
 
-            # =================================================
-            # RESULTADO
-            # =================================================
 
             st.divider()
 
@@ -734,9 +620,6 @@ if arquivo_enviado is not None:
             )
 
 
-            # =================================================
-            # TIPOS
-            # =================================================
 
             st.subheader(
                 "🔎 Tipos identificados"
@@ -772,9 +655,6 @@ if arquivo_enviado is not None:
             )
 
 
-            # =================================================
-            # PDF DOS COMPROVANTES
-            # =================================================
 
             if os.path.exists(
                 resultado[
@@ -818,10 +698,6 @@ if arquivo_enviado is not None:
                     )
 
 
-            # =================================================
-            # PDF SEM COMPROVANTES
-            # =================================================
-
             if os.path.exists(
                 resultado[
                     "caminho_sem_comprovantes"
@@ -863,10 +739,6 @@ if arquivo_enviado is not None:
                         key="download_sem_comprovantes_pdf"
                     )
 
-
-            # =================================================
-            # ZIP DOS COMPROVANTES
-            # =================================================
 
             if os.path.exists(
                 resultado[
@@ -910,9 +782,6 @@ if arquivo_enviado is not None:
                     )
 
 
-            # =================================================
-            # ZIP SEM COMPROVANTES
-            # =================================================
 
             if os.path.exists(
                 resultado[
@@ -956,9 +825,6 @@ if arquivo_enviado is not None:
                     )
 
 
-            # =================================================
-            # DIAGNÓSTICO
-            # =================================================
 
             if resultado[
                 "diagnostico"
@@ -977,9 +843,6 @@ if arquivo_enviado is not None:
                         )
 
 
-            # =================================================
-            # NENHUM COMPROVANTE
-            # =================================================
 
             if resultado[
                 "total_comprovantes"
@@ -993,9 +856,6 @@ if arquivo_enviado is not None:
                 )
 
 
-            # =================================================
-            # NENHUMA PÁGINA SEM COMPROVANTE
-            # =================================================
 
             if resultado[
                 "total_sem_comprovantes"
@@ -1030,45 +890,3 @@ if arquivo_enviado is not None:
             except Exception:
 
                 pass
-```
-
-### Agora o comportamento será
-
-Se o PDF original tiver, por exemplo, **100 páginas**:
-
-* páginas 1, 4, 8, 15, 20... → comprovantes
-* todas as demais → não comprovantes
-
-O sistema vai gerar:
-
-```text
-COMPROVANTES.pdf
-    ├── página 1
-    ├── página 4
-    ├── página 8
-    ├── página 15
-    └── página 20
-```
-
-e:
-
-```text
-SEM_COMPROVANTES.pdf
-    ├── página 2
-    ├── página 3
-    ├── página 5
-    ├── página 6
-    └── ...
-```
-
-E também:
-
-```text
-COMPROVANTES.zip
-    └── COMPROVANTES.pdf
-
-SEM_COMPROVANTES.zip
-    └── SEM_COMPROVANTES.pdf
-```
-
-**Um detalhe importante:** neste código eu mantive a ordem original das páginas dentro de cada PDF. Também mantive a identificação pelos três tipos que você configurou: PIX, transferência e transação bancária.
