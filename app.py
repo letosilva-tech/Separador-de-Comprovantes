@@ -26,16 +26,18 @@ st.set_page_config(
 def normalizar_texto(texto: str) -> str:
     """
     Normaliza o texto:
-    - transforma em maiúsculo
+    - maiúsculas
     - remove acentos
-    - transforma quebras de linha em espaços
+    - remove quebras de linha
     - remove espaços duplicados
     """
 
     texto = texto.upper()
 
-    # Remove acentos
-    texto = unicodedata.normalize("NFD", texto)
+    texto = unicodedata.normalize(
+        "NFD",
+        texto
+    )
 
     texto = "".join(
         caractere
@@ -43,34 +45,34 @@ def normalizar_texto(texto: str) -> str:
         if unicodedata.category(caractere) != "Mn"
     )
 
-    # Junta quebras de linha, tabs e espaços
-    texto = re.sub(r"\s+", " ", texto)
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    )
 
     return texto.strip()
 
 
 # ============================================================
-# IDENTIFICA O TIPO DO COMPROVANTE
+# IDENTIFICAÇÃO DO TIPO DE COMPROVANTE
 # ============================================================
 
 def identificar_tipo_comprovante(texto: str):
     """
-    Identifica:
+    Identifica o tipo do comprovante.
 
-    COMPROVANTE PIX
+    Tipos aceitos:
 
-    COMPROVANTE DE TRANSFERENCIA
-
-    COMPROVANTE DE TRANSFERÊNCIA
-
-    Também aceita caso o PDF quebre as palavras
-    em linhas diferentes.
+    1. COMPROVANTE PIX
+    2. COMPROVANTE DE TRANSFERENCIA
+    3. COMPROVANTE DE TRANSACAO BANCARIA
     """
 
     texto = normalizar_texto(texto)
 
     # --------------------------------------------------------
-    # PIX
+    # COMPROVANTE PIX
     # --------------------------------------------------------
 
     if re.search(
@@ -80,7 +82,7 @@ def identificar_tipo_comprovante(texto: str):
         return "PIX"
 
     # --------------------------------------------------------
-    # TRANSFERÊNCIA
+    # COMPROVANTE DE TRANSFERÊNCIA
     # --------------------------------------------------------
 
     if re.search(
@@ -89,22 +91,30 @@ def identificar_tipo_comprovante(texto: str):
     ):
         return "TRANSFERENCIA"
 
+    # --------------------------------------------------------
+    # COMPROVANTE DE TRANSAÇÃO BANCÁRIA
+    # --------------------------------------------------------
+
+    if re.search(
+        r"COMPROVANTE\s+DE\s+TRANSACAO\s+BANCARIA",
+        texto
+    ):
+        return "TRANSACAO_BANCARIA"
+
     return None
 
 
 # ============================================================
-# VERIFICA SE A PÁGINA ESTÁ EM BRANCO
+# VERIFICA PÁGINA EM BRANCO
 # ============================================================
 
 def is_pagina_em_branco(pagina):
-    """
-    Retorna True somente se a página não possuir
-    texto nem imagens.
-    """
 
     texto = pagina.extract_text() or ""
 
-    tem_imagens = len(pagina.images) > 0
+    tem_imagens = len(
+        pagina.images
+    ) > 0
 
     return (
         not texto.strip()
@@ -113,7 +123,7 @@ def is_pagina_em_branco(pagina):
 
 
 # ============================================================
-# SEPARA OS COMPROVANTES
+# SEPARAÇÃO DOS COMPROVANTES
 # ============================================================
 
 def separar_comprovantes(
@@ -134,18 +144,22 @@ def separar_comprovantes(
 
     paginas_sem_comprovante = []
 
-    total_paginas = len(leitor.pages)
+    total_paginas = len(
+        leitor.pages
+    )
 
     # ========================================================
-    # PERCORRE TODAS AS PÁGINAS
+    # ANALISA CADA PÁGINA
     # ========================================================
 
-    for indice, pagina in enumerate(leitor.pages):
+    for indice, pagina in enumerate(
+        leitor.pages
+    ):
 
         numero_pagina = indice + 1
 
         # ----------------------------------------------------
-        # Atualiza progresso
+        # PROGRESSO
         # ----------------------------------------------------
 
         progresso.progress(
@@ -159,13 +173,13 @@ def separar_comprovantes(
         )
 
         # ----------------------------------------------------
-        # Extrai texto
+        # EXTRAI TEXTO
         # ----------------------------------------------------
 
         texto = pagina.extract_text() or ""
 
         # ----------------------------------------------------
-        # Verifica se começa novo comprovante
+        # IDENTIFICA TIPO
         # ----------------------------------------------------
 
         tipo = identificar_tipo_comprovante(
@@ -178,8 +192,10 @@ def separar_comprovantes(
 
         if tipo is not None:
 
-            # Se já havia um comprovante aberto,
-            # salva o anterior
+            # -----------------------------------------------
+            # Salva comprovante anterior
+            # -----------------------------------------------
+
             if comprovante_atual:
 
                 comprovantes.append({
@@ -189,7 +205,10 @@ def separar_comprovantes(
                     "pagina_fim": numero_pagina - 1
                 })
 
+            # -----------------------------------------------
             # Inicia novo comprovante
+            # -----------------------------------------------
+
             comprovante_atual = [
                 pagina
             ]
@@ -222,8 +241,6 @@ def separar_comprovantes(
 
         else:
 
-            # Página que apareceu antes de qualquer
-            # comprovante ser encontrado
             paginas_sem_comprovante.append(
                 numero_pagina
             )
@@ -258,13 +275,15 @@ st.title(
 
 st.write(
     """
-    Selecione um único arquivo PDF contendo vários comprovantes.
+    Selecione um único PDF contendo vários comprovantes.
 
     O sistema identifica automaticamente:
 
     🔵 **COMPROVANTE PIX**
 
     🟢 **COMPROVANTE DE TRANSFERÊNCIA**
+
+    🟣 **COMPROVANTE DE TRANSAÇÃO BANCÁRIA**
 
     Cada comprovante pode possuir uma ou várias páginas.
     """
@@ -282,7 +301,7 @@ arquivo_pdf = st.file_uploader(
 
 
 # ============================================================
-# LIMPA RESULTADOS QUANDO O ARQUIVO É REMOVIDO
+# LIMPA RESULTADOS
 # ============================================================
 
 if arquivo_pdf is None:
@@ -304,6 +323,11 @@ if arquivo_pdf is None:
 
     st.session_state.pop(
         "transferencias",
+        None
+    )
+
+    st.session_state.pop(
+        "transacoes",
         None
     )
 
@@ -363,7 +387,7 @@ if arquivo_pdf is not None:
             progresso = st.progress(0)
 
             # =================================================
-            # ANALISA PDF
+            # ANALISA
             # =================================================
 
             (
@@ -377,29 +401,19 @@ if arquivo_pdf is not None:
             )
 
             # =================================================
-            # NENHUM ENCONTRADO
+            # NENHUM COMPROVANTE
             # =================================================
 
             if not comprovantes:
 
                 status.error(
-                    "❌ Nenhum comprovante foi encontrado."
+                    "❌ Nenhum comprovante encontrado."
                 )
 
                 st.warning(
                     """
-                    Não foi possível identificar:
-
-                    • COMPROVANTE PIX
-
-                    • COMPROVANTE DE TRANSFERÊNCIA
-                    """
-                )
-
-                st.info(
-                    """
-                    Se o PDF for escaneado como imagem,
-                    será necessário utilizar OCR.
+                    Nenhum dos tipos de comprovante
+                    foi identificado.
                     """
                 )
 
@@ -410,7 +424,7 @@ if arquivo_pdf is not None:
                 # =================================================
 
                 status.text(
-                    "📦 Criando arquivos dos comprovantes..."
+                    "📦 Gerando arquivos..."
                 )
 
                 zip_buffer = BytesIO()
@@ -419,15 +433,13 @@ if arquivo_pdf is not None:
 
                 quantidade_transferencia = 0
 
+                quantidade_transacao = 0
+
                 with zipfile.ZipFile(
                     zip_buffer,
                     "w",
                     zipfile.ZIP_DEFLATED
                 ) as zip_file:
-
-                    # ---------------------------------------------
-                    # Percorre cada comprovante
-                    # ---------------------------------------------
 
                     for numero, comprovante in enumerate(
                         comprovantes,
@@ -443,19 +455,33 @@ if arquivo_pdf is not None:
                         ]
 
                         # -----------------------------------------
-                        # Contadores
+                        # CONTADORES
                         # -----------------------------------------
 
                         if tipo == "PIX":
 
                             quantidade_pix += 1
 
+                            prefixo = "PIX"
+
                         elif tipo == "TRANSFERENCIA":
 
                             quantidade_transferencia += 1
 
+                            prefixo = "TRANSFERENCIA"
+
+                        elif tipo == "TRANSACAO_BANCARIA":
+
+                            quantidade_transacao += 1
+
+                            prefixo = "TRANSACAO_BANCARIA"
+
+                        else:
+
+                            prefixo = "OUTRO"
+
                         # -----------------------------------------
-                        # Cria PDF
+                        # CRIA PDF
                         # -----------------------------------------
 
                         escritor = PdfWriter()
@@ -473,32 +499,17 @@ if arquivo_pdf is not None:
                         )
 
                         # -----------------------------------------
-                        # Nome do arquivo
+                        # NOME
                         # -----------------------------------------
 
-                        if tipo == "PIX":
-
-                            nome = (
-                                f"comprovante_PIX_"
-                                f"{numero:03d}.pdf"
-                            )
-
-                        elif tipo == "TRANSFERENCIA":
-
-                            nome = (
-                                f"comprovante_TRANSFERENCIA_"
-                                f"{numero:03d}.pdf"
-                            )
-
-                        else:
-
-                            nome = (
-                                f"comprovante_"
-                                f"{numero:03d}.pdf"
-                            )
+                        nome = (
+                            f"comprovante_"
+                            f"{prefixo}_"
+                            f"{numero:03d}.pdf"
+                        )
 
                         # -----------------------------------------
-                        # Adiciona ao ZIP
+                        # ZIP
                         # -----------------------------------------
 
                         zip_file.writestr(
@@ -507,7 +518,7 @@ if arquivo_pdf is not None:
                         )
 
                 # =================================================
-                # SALVA RESULTADOS
+                # SALVA
                 # =================================================
 
                 st.session_state[
@@ -525,6 +536,10 @@ if arquivo_pdf is not None:
                 st.session_state[
                     "transferencias"
                 ] = quantidade_transferencia
+
+                st.session_state[
+                    "transacoes"
+                ] = quantidade_transacao
 
                 st.session_state[
                     "ignoradas"
@@ -547,7 +562,7 @@ if arquivo_pdf is not None:
                 )
 
                 # =================================================
-                # RESUMO
+                # RESULTADO
                 # =================================================
 
                 st.divider()
@@ -556,7 +571,7 @@ if arquivo_pdf is not None:
                     "📊 Resultado"
                 )
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
 
                 with col1:
 
@@ -579,9 +594,16 @@ if arquivo_pdf is not None:
                         quantidade_transferencia
                     )
 
+                with col4:
+
+                    st.metric(
+                        "Transações bancárias",
+                        quantidade_transacao
+                    )
+
                 st.info(
                     f"⏱️ Tempo de processamento: "
-                    f"{tempo:.1f} segundos"
+                    f"**{tempo:.1f} segundos**"
                 )
 
                 # =================================================
@@ -596,7 +618,7 @@ if arquivo_pdf is not None:
                     )
 
                 # =================================================
-                # DIAGNÓSTICO
+                # TABELA
                 # =================================================
 
                 st.divider()
@@ -623,7 +645,7 @@ if arquivo_pdf is not None:
                         "Página final": comprovante[
                             "pagina_fim"
                         ],
-                        "Páginas": len(
+                        "Quantidade de páginas": len(
                             comprovante[
                                 "paginas"
                             ]
@@ -657,7 +679,7 @@ if (
     st.divider()
 
     st.subheader(
-        "📦 Download"
+        "📦 Arquivos prontos"
     )
 
     quantidade = st.session_state[
@@ -672,18 +694,36 @@ if (
         "transferencias"
     ]
 
+    transacoes = st.session_state[
+        "transacoes"
+    ]
+
     st.success(
         f"✅ {quantidade} comprovante(s) "
         f"foram separados."
     )
 
-    st.write(
-        f"🔵 PIX: **{pix}**"
-    )
+    col1, col2, col3 = st.columns(3)
 
-    st.write(
-        f"🟢 Transferências: **{transferencias}**"
-    )
+    with col1:
+
+        st.write(
+            f"🔵 PIX: **{pix}**"
+        )
+
+    with col2:
+
+        st.write(
+            f"🟢 Transferências: "
+            f"**{transferencias}**"
+        )
+
+    with col3:
+
+        st.write(
+            f"🟣 Transações bancárias: "
+            f"**{transacoes}**"
+        )
 
     st.download_button(
         label="📦 Baixar comprovantes em ZIP",
